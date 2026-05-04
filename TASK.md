@@ -1,0 +1,1 @@
+https://higgsfield-ai.notion.site/Higgsfield-AI-Engineering-Challenge-34eea9455d1180d581c5f797520c4e66
