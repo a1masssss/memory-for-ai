@@ -18,6 +18,8 @@ SECTION_TITLES = {
     "negative_constraints": "Negative Prompt Memory",
     "generation_feedback": "Relevant Prior Generation Feedback",
     "character_continuity": "Continuity Anchors",
+    "communication": "Communication Preferences",
+    "opinions": "Known Opinions",
 }
 
 TYPE_BOOSTS = {
@@ -29,6 +31,21 @@ TYPE_BOOSTS = {
     "continuity_anchor": 1.25,
     "event": 1.0,
     "opinion": 1.0,
+}
+
+QUERY_ALIASES = {
+    ("personal_context", "current_location"): "location city live lives where moved based",
+    ("personal_context", "employment"): "employment work works job company role joined",
+    ("personal_context", "pet"): "pet dog cat animal name named",
+    ("personal_context", "dietary_preference"): "diet food vegetarian vegan eats",
+    ("personal_context", "allergy"): "allergy allergic avoid food constraint",
+    ("personal_context", "family"): "family child son daughter kid",
+    ("communication", "answer_style"): "communication answer style concise direct verbose",
+    ("creative_style", "visual_style"): "visual style aesthetic look generation video",
+    ("camera_language", "camera_direction"): "camera composition framing shot angle video",
+    ("motion_language", "motion_style"): "motion movement pacing speed video",
+    ("lighting", "lighting_style"): "lighting light color mood video",
+    ("negative_constraints", "avoid_glossy_polish"): "avoid negative constraint glossy polish",
 }
 
 
@@ -86,7 +103,7 @@ async def build_recall_response(
         Citation(
             turn_id=str(row["source_turn"]),
             score=round(score, 3),
-            snippet=_snippet(row["evidence"]),
+            snippet=_snippet(f"{row['key']}: {row['value']}"),
         )
         for score, row in used
     ]
@@ -95,7 +112,13 @@ async def build_recall_response(
 
 def _score(row: asyncpg.Record, query: str, session_id: str) -> float:
     lexical = float(row["lexical_score"] or 0.0)
-    overlap = _keyword_overlap(query, f"{row['key']} {row['value']} {row['evidence']}")
+    alias = QUERY_ALIASES.get((row["category"], row["key"]), "")
+    overlap = _keyword_overlap(
+        query,
+        f"{row['category']} {row['key']} {row['value']} {row['evidence']} {alias}",
+    )
+    if lexical <= 0 and overlap <= 0:
+        return 0.0
     type_boost = TYPE_BOOSTS.get(row["memory_type"], 1.0)
     same_session = 0.25 if row["source_session"] == session_id else 0.0
     stable_memory = 0.2 if row["category"] in {"personal_context", "creative_style"} else 0.0
@@ -139,6 +162,8 @@ def _section_order(grouped: dict[str, list[tuple[float, asyncpg.Record]]]) -> li
         "motion_language",
         "lighting",
         "character_continuity",
+        "communication",
+        "opinions",
         "generation_feedback",
     ]
     remaining = [category for category in grouped if category not in preferred]

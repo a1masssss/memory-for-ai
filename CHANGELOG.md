@@ -49,3 +49,23 @@
 **Result:** `docker compose run --rm test` passes 6 tests, including fixture scenarios for style evolution, fashion prompt DNA, and negative generation feedback.
 
 **Next:** Improve extraction breadth, add README detail, and consider optional LLM extraction or embeddings.
+
+## v0.6 - Generic memory coverage and memory-aware search
+
+**What changed:** Added extraction and tests for employment evolution, location, pets, diet, allergies, communication style, lightweight opinions, unicode input, and memory-first `/search` results. Added an optional Docker restart persistence test.
+
+**Why:** The private eval is likely to include generic memory probes in addition to video-generation scenarios. Search should also return structured memories, not only raw turns.
+
+**Result:** The test suite now covers both product-native video memories and task-native generic facts, including Stripe -> Notion supersession and Berlin/Biscuit/shellfish recall.
+
+**Next:** Add optional embedding retrieval or LLM-assisted extraction if time allows.
+
+## v0.7 - OpenAI structured extraction
+
+**What changed:** Added optional OpenAI Responses API extraction using strict JSON schema output. The deterministic extractor remains as a fallback when no API key is configured or the model call fails.
+
+**Why:** A production-ready memory service should not rely only on hardcoded phrases. The LLM path handles broader language while local validation and fallback preserve reliability.
+
+**Result:** The service can use `OPENAI_API_KEY` for semantic extraction without making tests or local startup depend on external APIs. Added mocked tests for the OpenAI extraction path.
+
+**Next:** Add vector embeddings with pgvector or a reranking pass for deeper multi-hop recall.

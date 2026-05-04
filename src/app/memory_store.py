@@ -5,12 +5,14 @@ from typing import Any
 
 import asyncpg
 
-from .extractor import ExtractedMemory
+from .memory_types import ExtractedMemory
 
 
 MUTABLE_MEMORY_KEYS = {
     ("personal_context", "current_location"),
     ("personal_context", "employment"),
+    ("personal_context", "dietary_preference"),
+    ("communication", "answer_style"),
     ("creative_style", "visual_style"),
     ("camera_language", "camera_direction"),
     ("motion_language", "motion_style"),
@@ -74,7 +76,7 @@ async def _supersede_existing(
     user_id: str | None,
     session_id: str,
 ) -> str | None:
-    if (memory.category, memory.key) not in MUTABLE_MEMORY_KEYS:
+    if (memory.category, memory.key) not in MUTABLE_MEMORY_KEYS and memory.category != "opinions":
         return None
 
     row = await connection.fetchrow(

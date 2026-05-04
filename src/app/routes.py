@@ -33,7 +33,7 @@ async def create_turn(payload: TurnCreate) -> TurnCreated:
     content_text = "\n".join(
         f"{message.role}: {message.content}" for message in payload.messages
     )
-    extracted_memories = extract_memories(payload.messages)
+    extracted_memories = await extract_memories(payload.messages)
     async with db.transaction() as connection:
         row = await connection.fetchrow(
             """
@@ -84,17 +84,50 @@ async def recall(payload: RecallRequest) -> RecallResponse:
 async def search(payload: SearchRequest) -> SearchResponse:
     rows = await db.fetch(
         """
+        WITH memory_results AS (
+            SELECT
+                value AS content,
+                ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) + 0.5 AS score,
+                source_session AS session_id,
+                updated_at AS timestamp,
+                jsonb_build_object(
+                    'kind', 'memory',
+                    'type', memory_type,
+                    'category', category,
+                    'key', key,
+                    'active', active
+                ) AS metadata
+            FROM memories
+            WHERE
+                active = true
+                AND ($2::text IS NULL OR source_session = $2)
+                AND ($3::text IS NULL OR user_id = $3)
+                AND search_vector @@ websearch_to_tsquery('english', $1)
+        ),
+        turn_results AS (
+            SELECT
+                content_text AS content,
+                ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) AS score,
+                session_id,
+                timestamp,
+                metadata || jsonb_build_object('kind', 'turn') AS metadata
+            FROM turns
+            WHERE
+                ($2::text IS NULL OR session_id = $2)
+                AND ($3::text IS NULL OR user_id = $3)
+                AND search_vector @@ websearch_to_tsquery('english', $1)
+        )
         SELECT
-            content_text AS content,
-            ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) AS score,
+            content,
+            score,
             session_id,
             timestamp,
             metadata
-        FROM turns
-        WHERE
-            ($2::text IS NULL OR session_id = $2)
-            AND ($3::text IS NULL OR user_id = $3)
-            AND search_vector @@ websearch_to_tsquery('english', $1)
+        FROM (
+            SELECT * FROM memory_results
+            UNION ALL
+            SELECT * FROM turn_results
+        ) AS results
         ORDER BY score DESC, timestamp DESC
         LIMIT $4
         """,

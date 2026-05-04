@@ -107,6 +107,54 @@
           "forbidden_terms": []
         }
       ]
+    },
+    {
+      "name": "generic_fact_evolution",
+      "user_id": "fixture-generic-facts",
+      "turns": [
+        {
+          "session_id": "fixture-generic-1",
+          "timestamp": "2025-03-15T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I work at Stripe as an engineer. I just moved to Berlin from NYC last month. I am vegetarian and allergic to shellfish. I was walking Biscuit this morning."
+            },
+            {
+              "role": "assistant",
+              "content": "Berlin, Stripe, vegetarian food, shellfish allergy, and Biscuit noted."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-generic-2",
+          "timestamp": "2025-03-16T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I just joined Notion as a PM."
+            },
+            {
+              "role": "assistant",
+              "content": "Congrats on the new role at Notion."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-generic-3",
+          "query": "Where does the user live, where do they work, and what constraints should I remember?",
+          "expected_terms": [
+            "Berlin",
+            "Notion",
+            "Vegetarian",
+            "Allergic to shellfish",
+            "Dog named Biscuit"
+          ],
+          "forbidden_terms": ["Stripe"]
+        }
+      ]
     }
   ]
 }

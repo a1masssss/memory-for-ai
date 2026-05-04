@@ -5,6 +5,11 @@ services:
       APP_NAME: ${APP_NAME:-memory-service}
       DATABASE_URL: ${DATABASE_URL:-postgresql://memory:memory@postgres:5432/memory}
       MEMORY_AUTH_TOKEN: ${MEMORY_AUTH_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_EXTRACTION_ENABLED: ${OPENAI_EXTRACTION_ENABLED:-true}
+      OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-20}
     ports:
       - "8080:8080"
     depends_on:
@@ -28,12 +33,17 @@ services:
   test:
     build: .
     environment:
-      MEMORY_SERVICE_URL: http://api:8080
+      APP_NAME: memory-service-test
+      DATABASE_URL: postgresql://memory:memory@postgres:5432/memory
+      MEMORY_SERVICE_URL: http://127.0.0.1:8080
+      OPENAI_EXTRACTION_ENABLED: "false"
     depends_on:
-      api:
-        condition: service_started
+      postgres:
+        condition: service_healthy
     command: >
-      sh -c "pip install --no-cache-dir '.[test]' && pytest"
+      sh -c "pip install --no-cache-dir '.[test]' &&
+             (uvicorn app.main:app --host 0.0.0.0 --port 8080 &) &&
+             pytest"
 
 volumes:
   postgres_data:

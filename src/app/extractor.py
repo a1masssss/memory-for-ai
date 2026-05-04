@@ -1,24 +1,30 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any
 
-from .schemas import Message, MemoryType
-
-
-@dataclass(frozen=True)
-class ExtractedMemory:
-    memory_type: MemoryType
-    category: str
-    key: str
-    value: str
-    evidence: str
-    confidence: float = 0.75
-    attributes: dict[str, Any] = field(default_factory=dict)
+from .config import get_settings
+from .memory_types import ExtractedMemory
+from .openai_extractor import extract_with_openai
+from .schemas import Message
 
 
-def extract_memories(messages: list[Message]) -> list[ExtractedMemory]:
+async def extract_memories(messages: list[Message]) -> list[ExtractedMemory]:
+    rule_memories = extract_rule_based_memories(messages)
+    settings = get_settings()
+    if not settings.openai_extraction_enabled or not settings.openai_api_key:
+        return rule_memories
+
+    llm_memories = await extract_with_openai(
+        messages=messages,
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        base_url=settings.openai_base_url,
+        timeout_seconds=settings.openai_timeout_seconds,
+    )
+    return _dedupe(llm_memories + rule_memories)
+
+
+def extract_rule_based_memories(messages: list[Message]) -> list[ExtractedMemory]:
     memories: list[ExtractedMemory] = []
     user_texts = [message.content for message in messages if message.role == "user"]
 
@@ -32,6 +38,7 @@ def extract_memories(messages: list[Message]) -> list[ExtractedMemory]:
 
 def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
     memories: list[ExtractedMemory] = []
+    lowered = text.lower()
 
     moved_match = re.search(
         r"\b(?:i\s+)?(?:just\s+)?moved to (?P<city>[A-Z][A-Za-z\s.-]+?)(?: from (?P<from>[A-Z][A-Za-z\s.-]+?))?(?: last|\sand|\.|,|$)",
@@ -54,8 +61,25 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
             )
         )
 
+    location_match = re.search(
+        r"\b(?:i\s+)?(?:live in|am based in|i'm based in|currently live in|currently based in) (?P<city>[A-Z][A-Za-z\s.-]+?)(?: now| these days|\.|,|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if location_match and not moved_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="current_location",
+                value=_clean_capture(location_match.group("city")),
+                evidence=text,
+                confidence=0.84,
+            )
+        )
+
     work_match = re.search(
-        r"\bI (?:work at|work for|joined|started at|just joined) (?P<company>[A-Z][A-Za-z0-9&.\s-]+)",
+        r"\bI (?:work at|work for|joined|started at|just joined) (?P<company>[A-Z][A-Za-z0-9&.\s-]+?)(?: as | now| recently| last|\.|,|$)",
         text,
     )
     if work_match:
@@ -64,14 +88,14 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
                 memory_type="fact",
                 category="personal_context",
                 key="employment",
-                value=work_match.group("company").strip().rstrip("."),
+                value=_clean_capture(work_match.group("company")),
                 evidence=text,
                 confidence=0.85,
             )
         )
 
     pet_match = re.search(
-        r"\b(?:my dog|dog named|walking) (?P<pet>[A-Z][A-Za-z-]+)\b",
+        r"\b(?:my dog(?: is named)?|dog named|walking) (?P<pet>[A-Z][A-Za-z-]+)\b",
         text,
     )
     if pet_match:
@@ -86,6 +110,102 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
             )
         )
 
+    if "vegetarian" in lowered:
+        memories.append(
+            ExtractedMemory(
+                memory_type="preference",
+                category="personal_context",
+                key="dietary_preference",
+                value="Vegetarian",
+                evidence=text,
+                confidence=0.82,
+            )
+        )
+
+    allergy_match = re.search(
+        r"\b(?:allergic to|allergy to) (?P<allergy>[a-zA-Z ,&-]+?)(?:\.|,| and I| but |$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if allergy_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="allergy",
+                value=f"Allergic to {_clean_capture(allergy_match.group('allergy')).lower()}",
+                evidence=text,
+                confidence=0.86,
+            )
+        )
+
+    child_match = re.search(
+        r"\b(?:my son|my daughter|my child|kid named|child named) (?P<name>[A-Z][A-Za-z-]+)\b",
+        text,
+    )
+    if child_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="family",
+                value=f"Has a child named {child_match.group('name')}",
+                evidence=text,
+                confidence=0.78,
+            )
+        )
+
+    if "concise" in lowered or "direct answers" in lowered:
+        memories.append(
+            ExtractedMemory(
+                memory_type="preference",
+                category="communication",
+                key="answer_style",
+                value="Prefers concise, direct answers",
+                evidence=text,
+                confidence=0.78,
+            )
+        )
+
+    memories.extend(_extract_opinions(text))
+    return memories
+
+
+def _extract_opinions(text: str) -> list[ExtractedMemory]:
+    memories: list[ExtractedMemory] = []
+    patterns = [
+        (
+            r"\bI (?:love|like) (?P<topic>[A-Z][A-Za-z0-9+#.\s-]+?)(?:\.|,| but |$)",
+            "likes",
+        ),
+        (
+            r"\bI (?:hate|dislike) (?P<topic>[A-Z][A-Za-z0-9+#.\s-]+?)(?:\.|,| but |$)",
+            "dislikes",
+        ),
+        (
+            r"\b(?P<topic>[A-Z][A-Za-z0-9+#.\s-]+?) is fine for (?P<context>[a-zA-Z0-9\s-]+?)(?:\.|,| but |$)",
+            "conditional",
+        ),
+    ]
+    for pattern, stance in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        topic = _clean_capture(match.group("topic"))
+        if stance == "conditional":
+            value = f"{topic} is fine for {_clean_capture(match.group('context')).lower()}"
+        else:
+            value = f"{stance.capitalize()} {topic}"
+        memories.append(
+            ExtractedMemory(
+                memory_type="opinion",
+                category="opinions",
+                key=_slug(topic),
+                value=value,
+                evidence=text,
+                confidence=0.7,
+            )
+        )
     return memories
 
 
@@ -123,6 +243,8 @@ def _extract_creative_preferences(text: str) -> list[ExtractedMemory]:
         "not glossy": "avoid glossy polish",
         "too glossy": "avoid glossy polish",
         "not cinematic": "avoid cinematic polish",
+        "away from cinematic": "avoid cinematic polish",
+        "move away from cinematic": "avoid cinematic polish",
         "too artificial": "avoid artificial-looking results",
         "too cgi": "avoid CGI-looking results",
         "plastic skin": "avoid plastic skin",
@@ -254,6 +376,11 @@ def _is_negated(text: str, term: str) -> bool:
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def _clean_capture(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    return cleaned.rstrip(" .,!?:;")
 
 
 def _dedupe(memories: list[ExtractedMemory]) -> list[ExtractedMemory]:
