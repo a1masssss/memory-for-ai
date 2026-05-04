@@ -1,0 +1,112 @@
+{
+  "scenarios": [
+    {
+      "name": "style_evolution",
+      "user_id": "fixture-style-evolution",
+      "turns": [
+        {
+          "session_id": "fixture-style-1",
+          "timestamp": "2025-03-10T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I want everything cinematic for these product videos."
+            },
+            {
+              "role": "assistant",
+              "content": "I will lean into cinematic language."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-style-2",
+          "timestamp": "2025-03-15T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Actually let us move away from cinematic and make it more raw and documentary."
+            },
+            {
+              "role": "assistant",
+              "content": "I will shift toward raw documentary realism."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-style-3",
+          "query": "What visual style should we use now?",
+          "expected_terms": ["raw documentary realism"],
+          "forbidden_terms": ["cinematic visuals"]
+        }
+      ]
+    },
+    {
+      "name": "fashion_video_prompt_dna",
+      "user_id": "fixture-fashion-dna",
+      "turns": [
+        {
+          "session_id": "fixture-fashion-1",
+          "timestamp": "2025-03-15T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I want this fashion video to feel raw and documentary, not glossy. Use slow-motion close-ups and soft daylight."
+            },
+            {
+              "role": "assistant",
+              "content": "I will keep it natural, restrained, and tactile."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-fashion-2",
+          "query": "How should I style the next fashion video generation?",
+          "expected_terms": [
+            "raw documentary realism",
+            "avoid glossy polish",
+            "close-up framing",
+            "slow-motion movement",
+            "soft daylight"
+          ],
+          "forbidden_terms": []
+        }
+      ]
+    },
+    {
+      "name": "negative_generation_feedback",
+      "user_id": "fixture-feedback",
+      "turns": [
+        {
+          "session_id": "fixture-feedback-1",
+          "timestamp": "2025-03-16T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "The last one was too artificial and had over-smoothed plastic skin. Avoid fast camera motion."
+            },
+            {
+              "role": "assistant",
+              "content": "I will avoid artificial skin texture and keep the camera restrained."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-feedback-2",
+          "query": "What should we avoid in the next generation?",
+          "expected_terms": [
+            "avoid artificial-looking results",
+            "avoid plastic skin",
+            "avoid fast camera motion"
+          ],
+          "forbidden_terms": []
+        }
+      ]
+    }
+  ]
+}
