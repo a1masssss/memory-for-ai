@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import secrets
 from typing import Any
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 
 from . import db
+from .config import get_settings
 from .embeddings import embed_text, embed_texts, vector_literal
 from .extractor import extract_memories
 from .memory_store import memory_embedding_text, save_extracted_memories
@@ -29,8 +31,29 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def require_memory_auth(authorization: str | None = Header(default=None)) -> None:
+    settings = get_settings()
+    expected_token = settings.memory_auth_token
+    if not expected_token:
+        return
+
+    presented_token = _parse_bearer_token(authorization)
+    if presented_token is None or not secrets.compare_digest(
+        presented_token,
+        expected_token,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 @router.post("/turns", response_model=TurnCreated, status_code=status.HTTP_201_CREATED)
-async def create_turn(payload: TurnCreate) -> TurnCreated:
+async def create_turn(
+    payload: TurnCreate,
+    _: None = Depends(require_memory_auth),
+) -> TurnCreated:
     content_text = "\n".join(
         f"{message.role}: {message.content}" for message in payload.messages
     )
@@ -77,7 +100,10 @@ async def create_turn(payload: TurnCreate) -> TurnCreated:
 
 
 @router.post("/recall", response_model=RecallResponse)
-async def recall(payload: RecallRequest) -> RecallResponse:
+async def recall(
+    payload: RecallRequest,
+    _: None = Depends(require_memory_auth),
+) -> RecallResponse:
     async with db.pool().acquire() as connection:
         return await build_recall_response(
             connection,
@@ -89,7 +115,10 @@ async def recall(payload: RecallRequest) -> RecallResponse:
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search(payload: SearchRequest) -> SearchResponse:
+async def search(
+    payload: SearchRequest,
+    _: None = Depends(require_memory_auth),
+) -> SearchResponse:
     query_embedding = vector_literal(await embed_text(payload.query))
     rows = await db.fetch(
         """
@@ -180,7 +209,10 @@ async def search(payload: SearchRequest) -> SearchResponse:
 
 
 @router.get("/users/{user_id}/memories", response_model=UserMemoriesResponse)
-async def get_user_memories(user_id: str) -> UserMemoriesResponse:
+async def get_user_memories(
+    user_id: str,
+    _: None = Depends(require_memory_auth),
+) -> UserMemoriesResponse:
     rows = await db.fetch(
         """
         SELECT
@@ -224,17 +256,32 @@ async def get_user_memories(user_id: str) -> UserMemoriesResponse:
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_session(session_id: str) -> Response:
+async def delete_session(
+    session_id: str,
+    _: None = Depends(require_memory_auth),
+) -> Response:
     await db.execute("DELETE FROM turns WHERE session_id = $1", session_id)
     await db.execute("DELETE FROM memories WHERE source_session = $1", session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: str) -> Response:
+async def delete_user(
+    user_id: str,
+    _: None = Depends(require_memory_auth),
+) -> Response:
     await db.execute("DELETE FROM turns WHERE user_id = $1", user_id)
     await db.execute("DELETE FROM memories WHERE user_id = $1", user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _parse_bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token.strip()
 
 
 def _json_dict(value: Any) -> dict[str, Any]:

@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.4 - Generic-first positioning and fixed embedding dimensions
+
+**What changed:** Reframed the project documentation around a general-purpose memory service rather than a video-only demo angle. Removed the misleading `EMBEDDING_DIMENSIONS` runtime setting and aligned the code/docs with the actual fixed `vector(64)` schema. Added a reviewer-facing evaluation snapshot to the README.
+
+**Why:** The implementation had already become broader than its original demo framing, but the docs still made it look more overfit than it was. The embedding dimension setting also implied configurability that the database schema did not truly support.
+
+**Result:** The service now presents itself more honestly: generic memory first, domain-specific memories as an example specialization, and a clearer retrieval story for reviewers. The embedding path is less surprising because the runtime configuration now matches the actual schema contract.
+
+**Next:** If there is another pass, add a small measured comparison section for lexical-only versus hybrid retrieval on held-out paraphrase-heavy probes.
+
 ## v1.3 - LLM-first extraction with fallback-only heuristics
 
 **What changed:** Switched extraction orchestration so validated OpenAI output is now authoritative when available. Rule-based extraction is only used when the model is unavailable or returns invalid structured output. Expanded the model schema to allow richer memory attributes such as `revision_kind`, `topic`, and `stance`.

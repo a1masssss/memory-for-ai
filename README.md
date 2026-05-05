@@ -1,6 +1,6 @@
 # Memory Service
 
-Dockerized memory service for an AI agent, optimized around video-generation workflows: creative preferences, prompt style, negative constraints, prior generation feedback, and continuity cues.
+Dockerized memory service for an AI agent. It stores raw turns, extracts structured memories, preserves fact evolution, and assembles recall context with hybrid lexical plus vector retrieval.
 
 ## Architecture
 
@@ -27,13 +27,13 @@ Postgres + pgvector image
 
 The service is a small FastAPI monolith backed by Postgres. `POST /turns` stores the raw conversation turn and extracts structured memories in the same database transaction, so memories are immediately available to `/recall` and `/users/{user_id}/memories` when the endpoint returns.
 
-The product angle is video generation rather than generic chatbot memory. The extractor promotes creative memory types such as visual style, camera language, motion preference, lighting, negative prompt constraints, and prior generation feedback, while still covering generic user facts from the task such as location, employment, pets, diet, allergies, communication preferences, and lightweight opinions.
+The memory schema is intentionally general-purpose first. It covers personal facts, preferences, constraints, communication style, and opinion evolution, while also supporting domain-specific memories such as creative style, camera language, motion preference, lighting, negative prompt constraints, and prior generation feedback. Video-generation recall is a supported example domain, not a separate product mode.
 
 ## Backing Store
 
-The backing store is Postgres using the `pgvector/pgvector:pg16` Docker image. The current implementation uses Postgres tables, JSONB, foreign keys, GIN indexes, full-text search, and `vector(64)` embedding columns on both turns and memories.
+The backing store is Postgres using the `pgvector/pgvector:pg16` Docker image. The current implementation uses Postgres tables, JSONB, foreign keys, GIN indexes, full-text search, and fixed `vector(64)` embedding columns on both turns and memories.
 
-This choice keeps the deployment simple while still supporting the challenge requirements: persistence via a named Docker volume, structured inspectable memories, lexical retrieval, contradiction history, and actual vector retrieval without adding another service.
+This choice keeps the deployment simple while still supporting the challenge requirements: persistence via a named Docker volume, structured inspectable memories, lexical retrieval, contradiction history, and actual vector retrieval without adding another service. The embedding dimension is intentionally fixed at 64 to match the database schema and avoid misleading runtime configurability.
 
 ## Extraction Pipeline
 
@@ -100,7 +100,7 @@ Retrieval is now hybrid on two axes:
 - lexical: Postgres full-text rank plus keyword overlap
 - vector: cosine similarity over pgvector embeddings for both memories and turns
 
-These scores are blended with the existing type boosts, same-session bias, stable-memory priority, and lightweight multi-hop expansion over memory links.
+These scores are blended with the existing type boosts, same-session bias, stable-memory priority, and lightweight multi-hop expansion over memory links. Cosine similarity is one feature inside the ranker, not a standalone top-k retrieval strategy.
 
 The token budget is approximate: the assembler estimates tokens from word count and admits items while they fit within `max_tokens`. Priority is stable facts first, then query-relevant structured memories, then recent raw context.
 
@@ -119,9 +119,25 @@ For opinions, the service no longer treats every same-key update as a hard overw
 
 `GET /users/{user_id}/memories` includes these attributes so reviewers can inspect why a memory was treated as a correction, conditional preference, or ordinary opinion update.
 
+## Evaluation Snapshot
+
+The current test suite exercises both contract correctness and reviewer-facing memory behavior:
+
+- empty-store and malformed-input contract behavior
+- cross-user isolation and persistence-oriented delete flows
+- fact evolution such as `Stripe -> Notion` and `Berlin -> Munich`
+- opinion arcs such as `love TypeScript -> generics are annoying -> fine for big projects`
+- recent raw-context fallback when extraction does not emit a structured memory
+- paraphrased recall like "What city does this user call home these days?"
+- tight-budget ranking where globally relevant memories must beat earlier sections
+- lightweight multi-hop recall such as `Biscuit -> Berlin`
+- hybrid lexical plus vector retrieval over both memories and turns
+
+The black-box recall fixture in `fixtures/recall_quality.json` currently requires at least `0.8` expected-term hit rate, and the full Docker test suite most recently passed with `25 passed, 1 skipped`.
+
 ## Tradeoffs
 
-The implementation optimizes for contract correctness, inspectability, and a strong video-generation memory story under a short time box. It avoids async job orchestration so `/turns` is synchronously correct.
+The implementation optimizes for contract correctness, inspectability, and recall quality under a short time box. It avoids async job orchestration so `/turns` is synchronously correct.
 
 The main tradeoff is extraction breadth. A rule-based extractor is predictable and easy to test, but less capable than an LLM extractor for subtle preferences, implicit facts, and gradual opinion arcs.
 
@@ -154,12 +170,23 @@ cp .env.example .env
 docker compose up --build
 ```
 
+Optional bearer auth:
+
+```bash
+cp .env.example .env
+# set MEMORY_AUTH_TOKEN in .env
+docker compose up --build
+curl -H "Authorization: Bearer <token>" http://localhost:8080/health
+```
+
+`GET /health` remains open for container health checks. All other endpoints require the bearer token when `MEMORY_AUTH_TOKEN` is set.
+
 ## Tests
 
 Run the black-box contract and recall-quality tests against the Compose stack:
 
 ```bash
-docker compose run --rm test
+docker compose run --build --rm test
 ```
 
 The recall fixture lives in `fixtures/recall_quality.json` and covers style evolution, prompt DNA, negative generation feedback, and generic fact evolution.

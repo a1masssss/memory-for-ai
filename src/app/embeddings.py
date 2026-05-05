@@ -13,6 +13,7 @@ from .config import get_settings
 
 
 logger = logging.getLogger(__name__)
+EMBEDDING_DIMENSIONS = 64
 
 
 async def embed_text(text: str) -> list[float]:
@@ -35,13 +36,13 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
             model=settings.openai_embedding_model,
             base_url=settings.openai_base_url,
             timeout_seconds=settings.openai_timeout_seconds,
-            dimensions=settings.embedding_dimensions,
+            dimensions=EMBEDDING_DIMENSIONS,
         )
         if remote is not None:
             return remote
 
     return [
-        _local_embedding(text, dimensions=settings.embedding_dimensions)
+        _local_embedding(text, dimensions=EMBEDDING_DIMENSIONS)
         for text in cleaned
     ]
 

@@ -18,7 +18,6 @@ class ApplyApiSettings(BaseSettings):
     openai_embedding_enabled: bool = True
     openai_embedding_model: str = "text-embedding-3-small"
     openai_timeout_seconds: float = 20.0
-    embedding_dimensions: int = 64
 
 
 @lru_cache
