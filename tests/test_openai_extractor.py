@@ -121,3 +121,71 @@ def test_openai_extractor_skips_invalid_memories(monkeypatch) -> None:
     )
 
     assert memories == []
+
+
+def test_openai_extractor_returns_none_on_invalid_json(monkeypatch) -> None:
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        return FakeHTTPResponse({"output_text": "{not valid json"})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    memories = asyncio.run(
+        extract_with_openai(
+            messages=[Message(role="user", content="I joined Notion.")],
+            api_key="test-key",
+            model="gpt-5-mini",
+            base_url="https://api.openai.com/v1",
+            timeout_seconds=20.0,
+        )
+    )
+
+    assert memories is None
+
+
+def test_openai_extractor_filters_non_scalar_attributes(monkeypatch) -> None:
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        return FakeHTTPResponse(
+            {
+                "output_text": json.dumps(
+                    {
+                        "memories": [
+                            {
+                                "memory_type": "opinion",
+                                "category": "opinions",
+                                "key": "typescript",
+                                "value": "Likes TypeScript",
+                                "evidence": "I love TypeScript.",
+                                "confidence": 0.88,
+                                "attributes": {
+                                    "Topic Name": "TypeScript",
+                                    "stance": "positive",
+                                    "weight": 2,
+                                    "nested": {"bad": "value"},
+                                    "items": ["bad"],
+                                },
+                            }
+                        ]
+                    }
+                )
+            }
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    memories = asyncio.run(
+        extract_with_openai(
+            messages=[Message(role="user", content="I love TypeScript.")],
+            api_key="test-key",
+            model="gpt-5-mini",
+            base_url="https://api.openai.com/v1",
+            timeout_seconds=20.0,
+        )
+    )
+
+    assert memories is not None
+    assert memories[0].attributes == {
+        "source": "openai",
+        "topic_name": "TypeScript",
+        "stance": "positive",
+        "weight": 2.0,
+    }

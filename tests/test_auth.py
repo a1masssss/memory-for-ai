@@ -38,6 +38,10 @@ def test_auth_requires_valid_bearer_token_when_configured(monkeypatch) -> None:
                 "/protected",
                 headers={"Authorization": "Bearer super-secret-token"},
             )
+            lowercase_scheme = client.get(
+                "/protected",
+                headers={"Authorization": "bearer super-secret-token"},
+            )
 
         assert health.status_code == 200
         assert missing.status_code == 401
@@ -45,6 +49,7 @@ def test_auth_requires_valid_bearer_token_when_configured(monkeypatch) -> None:
         assert missing.headers["www-authenticate"] == "Bearer"
         assert wrong.headers["www-authenticate"] == "Bearer"
         assert correct.status_code == 200
+        assert lowercase_scheme.status_code == 200
     finally:
         get_settings.cache_clear()
 

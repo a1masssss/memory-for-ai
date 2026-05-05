@@ -155,6 +155,141 @@
           "forbidden_terms": ["Stripe"]
         }
       ]
+    },
+    {
+      "name": "paraphrased_preferences",
+      "user_id": "fixture-paraphrased-preferences",
+      "turns": [
+        {
+          "session_id": "fixture-paraphrase-1",
+          "timestamp": "2025-03-17T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I'm vegan, allergic to peanuts, and please keep answers brief and direct."
+            },
+            {
+              "role": "assistant",
+              "content": "Understood. I will keep replies concise and remember the dietary constraints."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-paraphrase-2",
+          "query": "Any food restrictions I should keep in mind, and how chatty should replies be?",
+          "expected_terms": [
+            "Vegan",
+            "Allergic to peanuts",
+            "Prefers concise, direct answers"
+          ],
+          "forbidden_terms": []
+        }
+      ]
+    },
+    {
+      "name": "recent_context_fallback",
+      "user_id": "fixture-recent-context",
+      "turns": [
+        {
+          "session_id": "fixture-recent-1",
+          "timestamp": "2025-03-18T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I'm preparing for a system design interview at a FAANG company next month."
+            },
+            {
+              "role": "assistant",
+              "content": "We can focus on distributed systems, tradeoffs, and communication."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-recent-2",
+          "query": "What is the user preparing for?",
+          "expected_terms": [
+            "system design interview"
+          ],
+          "forbidden_terms": []
+        }
+      ]
+    },
+    {
+      "name": "pet_city_bridge",
+      "user_id": "fixture-pet-city",
+      "turns": [
+        {
+          "session_id": "fixture-bridge-1",
+          "timestamp": "2025-03-15T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I was walking Biscuit this morning."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-bridge-2",
+          "timestamp": "2025-03-16T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I just moved to Berlin from NYC last month."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-bridge-3",
+          "query": "Which city does Biscuit's owner call home?",
+          "expected_terms": [
+            "Dog named Biscuit",
+            "Berlin"
+          ],
+          "forbidden_terms": []
+        }
+      ]
+    },
+    {
+      "name": "correction_chain",
+      "user_id": "fixture-correction-chain",
+      "turns": [
+        {
+          "session_id": "fixture-correction-1",
+          "timestamp": "2025-03-10T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I live in Berlin."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-correction-2",
+          "timestamp": "2025-03-11T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Actually I live in Munich now."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "session_id": "fixture-correction-3",
+          "query": "What city does this user call home these days?",
+          "expected_terms": [
+            "Munich"
+          ],
+          "forbidden_terms": ["Berlin"]
+        }
+      ]
     }
   ]
 }

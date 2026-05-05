@@ -414,6 +414,60 @@ def test_fact_correction_supersedes_prior_value(client: httpx.Client) -> None:
     )
 
 
+def test_shorthand_correction_phrase_updates_location_and_employment(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-shorthand-correction"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "shorthand-correction-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live in Berlin and work at Stripe.",
+                }
+            ],
+            "timestamp": "2025-03-15T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+    client.post(
+        "/turns",
+        json={
+            "session_id": "shorthand-correction-2",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Sorry, not Berlin - Munich now. Sorry, not Stripe - I joined Notion.",
+                }
+            ],
+            "timestamp": "2025-03-16T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "Where do they live and where do they work now?",
+            "session_id": "shorthand-correction-3",
+            "user_id": user_id,
+            "max_tokens": 256,
+        },
+    )
+    assert recall.status_code == 200
+    context = recall.json()["context"]
+    assert "Munich" in context
+    assert "Notion" in context
+    assert "Berlin" not in context
+    assert "Stripe" not in context
+
+
 def test_opinion_history_preserves_arc_and_attributes(client: httpx.Client) -> None:
     user_id = "test-opinion-arc"
     client.delete(f"/users/{user_id}")
@@ -504,6 +558,172 @@ def test_search_returns_structured_memory_results(client: httpx.Client) -> None:
     assert any(result["metadata"].get("kind") == "memory" for result in results)
 
 
+def test_multi_message_turn_with_tool_noise_extracts_only_user_fact(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-tool-noise"
+    client.delete(f"/users/{user_id}")
+
+    response = client.post(
+        "/turns",
+        json={
+            "session_id": "tool-noise-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live in Berlin.",
+                },
+                {
+                    "role": "tool",
+                    "name": "lookup",
+                    "content": "Potential cities: Paris, London, Madrid",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Got it, Berlin noted.",
+                },
+            ],
+            "timestamp": "2025-03-19T09:30:00Z",
+            "metadata": {},
+        },
+    )
+
+    assert response.status_code == 201
+    memories = client.get(f"/users/{user_id}/memories")
+    assert memories.status_code == 200
+    values = {memory["value"] for memory in memories.json()["memories"]}
+    assert "Berlin" in values
+    assert "Paris" not in values
+    assert "London" not in values
+    assert "Madrid" not in values
+
+
+def test_search_returns_raw_turn_when_no_structured_memory_matches(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-search-raw-turn"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "search-raw-turn-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I am prepping for a distributed systems interview next week.",
+                }
+            ],
+            "timestamp": "2025-03-19T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    response = client.post(
+        "/search",
+        json={
+            "query": "distributed systems interview",
+            "session_id": None,
+            "user_id": user_id,
+            "limit": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert results
+    assert any(result["metadata"].get("kind") == "turn" for result in results)
+    assert any(
+        "distributed systems interview" in result["content"].lower()
+        for result in results
+    )
+
+
+def test_search_respects_session_scope_for_same_user(client: httpx.Client) -> None:
+    user_id = "test-search-session-scope"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "search-scope-a",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "For one project, prefer neon lighting.",
+                }
+            ],
+            "timestamp": "2025-03-19T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+    client.post(
+        "/turns",
+        json={
+            "session_id": "search-scope-b",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "For the other project, prefer soft daylight.",
+                }
+            ],
+            "timestamp": "2025-03-19T10:31:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    scoped = client.post(
+        "/search",
+        json={
+            "query": "project",
+            "session_id": "search-scope-a",
+            "user_id": None,
+            "limit": 10,
+        },
+    )
+    global_user = client.post(
+        "/search",
+        json={
+            "query": "project",
+            "session_id": None,
+            "user_id": user_id,
+            "limit": 10,
+        },
+    )
+
+    assert scoped.status_code == 200
+    scoped_contents = {result["content"] for result in scoped.json()["results"]}
+    assert any("neon lighting" in content.lower() for content in scoped_contents)
+    assert not any("soft daylight" in content.lower() for content in scoped_contents)
+
+    assert global_user.status_code == 200
+    global_contents = {result["content"] for result in global_user.json()["results"]}
+    assert any("neon lighting" in content.lower() for content in global_contents)
+    assert any("soft daylight" in content.lower() for content in global_contents)
+
+
+def test_search_cold_query_returns_empty_results(client: httpx.Client) -> None:
+    user_id = "test-search-cold"
+    client.delete(f"/users/{user_id}")
+
+    response = client.post(
+        "/search",
+        json={
+            "query": "favorite spaceship",
+            "session_id": None,
+            "user_id": user_id,
+            "limit": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"results": []}
+
+
 def test_recall_includes_recent_raw_turn_when_extractor_misses_it(
     client: httpx.Client,
 ) -> None:
@@ -547,6 +767,53 @@ def test_recall_includes_recent_raw_turn_when_extractor_misses_it(
     assert body["citations"]
 
 
+def test_session_only_memory_does_not_bleed_without_user_id(
+    client: httpx.Client,
+) -> None:
+    client.delete("/sessions/anon-session-a")
+    client.delete("/sessions/anon-session-b")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "anon-session-a",
+            "user_id": None,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live in Berlin and work at Notion.",
+                }
+            ],
+            "timestamp": "2025-03-20T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    same_session = client.post(
+        "/recall",
+        json={
+            "query": "Where does this user live?",
+            "session_id": "anon-session-a",
+            "user_id": None,
+            "max_tokens": 128,
+        },
+    )
+    other_session = client.post(
+        "/recall",
+        json={
+            "query": "Where does this user live?",
+            "session_id": "anon-session-b",
+            "user_id": None,
+            "max_tokens": 128,
+        },
+    )
+
+    assert same_session.status_code == 200
+    assert "Berlin" in same_session.json()["context"]
+    assert other_session.status_code == 200
+    assert other_session.json() == {"context": "", "citations": []}
+
+
 def test_recall_uses_global_ranking_under_tight_budget(client: httpx.Client) -> None:
     user_id = "test-global-budget"
     client.delete(f"/users/{user_id}")
@@ -585,6 +852,47 @@ def test_recall_uses_global_ranking_under_tight_budget(client: httpx.Client) -> 
     context = recall.json()["context"]
     assert "Communication Preferences" in context
     assert "Prefers concise, direct answers" in context
+
+
+def test_recall_does_not_blow_far_past_small_token_budget(client: httpx.Client) -> None:
+    user_id = "test-budget-discipline"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "budget-discipline-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "I work at Notion, live in Berlin, have a dog named Biscuit, "
+                        "am vegetarian, allergic to shellfish, and prefer concise answers. "
+                        "For videos, use raw documentary style, handheld framing, soft daylight, "
+                        "slow motion, and avoid glossy polish."
+                    ),
+                }
+            ],
+            "timestamp": "2025-03-20T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "Give me the most important things to remember about this user.",
+            "session_id": "budget-discipline-2",
+            "user_id": user_id,
+            "max_tokens": 24,
+        },
+    )
+
+    assert recall.status_code == 200
+    context = recall.json()["context"]
+    assert context
+    assert len(context.split()) <= 48
 
 
 def test_recall_can_multi_hop_across_linked_personal_memories(
@@ -653,6 +961,136 @@ def test_recall_can_multi_hop_across_linked_personal_memories(
     context = recall.json()["context"]
     assert "Dog named Biscuit" in context
     assert "Berlin" in context
+
+
+def test_repeating_same_mutable_fact_does_not_create_duplicate_memory(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-duplicate-mutable-fact"
+    client.delete(f"/users/{user_id}")
+
+    payload = {
+        "session_id": "duplicate-mutable-fact",
+        "user_id": user_id,
+        "messages": [{"role": "user", "content": "I work at Notion."}],
+        "timestamp": "2025-03-21T10:30:00Z",
+        "metadata": {},
+    }
+
+    client.post("/turns", json=payload).raise_for_status()
+    client.post("/turns", json=payload).raise_for_status()
+
+    memories = client.get(f"/users/{user_id}/memories")
+    assert memories.status_code == 200
+    employment_memories = [
+        memory
+        for memory in memories.json()["memories"]
+        if memory["key"] == "employment"
+    ]
+    assert len(employment_memories) == 1
+    assert employment_memories[0]["value"] == "Notion"
+    assert employment_memories[0]["active"] is True
+
+
+def test_delete_session_only_removes_that_session_data(client: httpx.Client) -> None:
+    user_id = "test-delete-session"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "delete-session-a",
+            "user_id": user_id,
+            "messages": [{"role": "user", "content": "I live in Berlin."}],
+            "timestamp": "2025-03-22T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+    client.post(
+        "/turns",
+        json={
+            "session_id": "delete-session-b",
+            "user_id": user_id,
+            "messages": [{"role": "user", "content": "I work at Notion."}],
+            "timestamp": "2025-03-23T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    deleted = client.delete("/sessions/delete-session-a")
+    assert deleted.status_code == 204
+
+    memories = client.get(f"/users/{user_id}/memories")
+    assert memories.status_code == 200
+    memory_values = {memory["value"] for memory in memories.json()["memories"]}
+    assert "Berlin" not in memory_values
+    assert "Notion" in memory_values
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "Where does this user work and live?",
+            "session_id": "delete-session-c",
+            "user_id": user_id,
+            "max_tokens": 256,
+        },
+    )
+    assert recall.status_code == 200
+    context = recall.json()["context"]
+    assert "Notion" in context
+    assert "Berlin" not in context
+
+
+def test_delete_user_clears_memories_and_turns(client: httpx.Client) -> None:
+    user_id = "test-delete-user"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "delete-user-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live in Berlin and work at Notion.",
+                }
+            ],
+            "timestamp": "2025-03-24T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    deleted = client.delete(f"/users/{user_id}")
+    assert deleted.status_code == 204
+
+    memories = client.get(f"/users/{user_id}/memories")
+    assert memories.status_code == 200
+    assert memories.json()["memories"] == []
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "Where do they live?",
+            "session_id": "delete-user-2",
+            "user_id": user_id,
+            "max_tokens": 128,
+        },
+    )
+    search = client.post(
+        "/search",
+        json={
+            "query": "Berlin",
+            "session_id": None,
+            "user_id": user_id,
+            "limit": 5,
+        },
+    )
+
+    assert recall.status_code == 200
+    assert recall.json() == {"context": "", "citations": []}
+    assert search.status_code == 200
+    assert search.json()["results"] == []
 
 
 def test_unicode_turn_does_not_crash(client: httpx.Client) -> None:
@@ -739,3 +1177,40 @@ def test_malformed_turn_input_returns_4xx(client: httpx.Client) -> None:
         headers={"Content-Type": "application/json"},
     )
     assert 400 <= bad_json.status_code < 500
+
+
+def test_request_validation_rejects_invalid_limits_and_roles(
+    client: httpx.Client,
+) -> None:
+    bad_role = client.post(
+        "/turns",
+        json={
+            "session_id": "bad-role",
+            "user_id": "bad-role-user",
+            "messages": [{"role": "system", "content": "not allowed"}],
+            "timestamp": "2025-03-25T10:30:00Z",
+            "metadata": {},
+        },
+    )
+    too_many_tokens = client.post(
+        "/recall",
+        json={
+            "query": "Where do they live?",
+            "session_id": "bad-recall-limit",
+            "user_id": "bad-role-user",
+            "max_tokens": 9000,
+        },
+    )
+    bad_search_limit = client.post(
+        "/search",
+        json={
+            "query": "Berlin",
+            "session_id": None,
+            "user_id": "bad-role-user",
+            "limit": 100,
+        },
+    )
+
+    assert bad_role.status_code == 422
+    assert too_many_tokens.status_code == 422
+    assert bad_search_limit.status_code == 422

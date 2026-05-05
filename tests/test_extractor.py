@@ -88,6 +88,56 @@ def test_extract_memories_uses_rules_only_when_llm_fails(monkeypatch) -> None:
     assert memories[0].value == "Berlin"
 
 
+def test_extract_memories_dedupes_duplicate_llm_memories(monkeypatch) -> None:
+    monkeypatch.setattr(extractor, "get_settings", lambda: StubSettings())
+    monkeypatch.setattr(
+        extractor,
+        "extract_with_openai",
+        _async_return(
+            [
+                ExtractedMemory(
+                    memory_type="fact",
+                    category="personal_context",
+                    key="employment",
+                    value="Notion",
+                    evidence="I work at Notion.",
+                    confidence=0.95,
+                    attributes={"source": "openai"},
+                ),
+                ExtractedMemory(
+                    memory_type="fact",
+                    category="personal_context",
+                    key="employment",
+                    value="Notion",
+                    evidence="I work at Notion.",
+                    confidence=0.93,
+                    attributes={"source": "openai"},
+                ),
+            ]
+        ),
+    )
+
+    memories = asyncio.run(
+        extractor.extract_memories(
+            [Message(role="user", content="I work at Notion.")]
+        )
+    )
+
+    assert len(memories) == 1
+    assert memories[0].value == "Notion"
+
+
+def test_rule_extractor_ignores_non_user_messages() -> None:
+    memories = extractor.extract_rule_based_memories(
+        [
+            Message(role="assistant", content="The user works at Notion in Berlin."),
+            Message(role="tool", content="employment=Notion"),
+        ]
+    )
+
+    assert memories == []
+
+
 def _async_return(value):
     async def _inner(*args, **kwargs):  # noqa: ANN001, ANN202
         return value

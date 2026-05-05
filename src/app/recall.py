@@ -315,6 +315,7 @@ async def build_recall_response(
     context, used_memories, used_turns = _assemble_context(
         ranked_memories,
         ranked_turns,
+        query_profile=query_profile,
         max_tokens=max_tokens,
     )
     citations = [
@@ -505,6 +506,7 @@ def _assemble_context(
     ranked_memories: list[tuple[float, asyncpg.Record]],
     ranked_turns: list[tuple[float, asyncpg.Record]],
     *,
+    query_profile: QueryProfile,
     max_tokens: int,
 ) -> tuple[
     str,
@@ -523,6 +525,12 @@ def _assemble_context(
     recent_lines: list[str] = []
     for score, row in ranked_turns:
         if str(row["id"]) in used_turn_ids:
+            continue
+        if _turn_is_redundant_with_selected_memories(
+            row["content_text"],
+            used_memories=used_memories,
+            query_profile=query_profile,
+        ):
             continue
         turn_summary = _format_recent_turn(row["content_text"])
         item_cost = _approx_tokens(f"- {turn_summary}")
@@ -604,6 +612,34 @@ def _section_order(grouped: dict[str, list[tuple[float, asyncpg.Record]]]) -> li
     ]
     remaining = [category for category in grouped if category not in preferred]
     return [category for category in preferred if category in grouped] + sorted(remaining)
+
+
+def _turn_is_redundant_with_selected_memories(
+    content_text: str,
+    *,
+    used_memories: list[tuple[float, asyncpg.Record]],
+    query_profile: QueryProfile,
+) -> bool:
+    if not used_memories:
+        return False
+
+    turn_terms = _terms(content_text)
+    if not turn_terms:
+        return False
+
+    for _, row in used_memories:
+        category = str(row["category"])
+        key = str(row["key"])
+        if (
+            (category, key) not in query_profile.target_keys
+            and category not in query_profile.target_categories
+        ):
+            continue
+        alias = QUERY_ALIASES.get((category, key), "")
+        slot_terms = _terms(f"{category} {key} {alias}")
+        if turn_terms & slot_terms:
+            return True
+    return False
 
 
 def _build_query_profile(query: str) -> QueryProfile:

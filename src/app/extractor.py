@@ -47,6 +47,24 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
     lowered = text.lower()
     revision_attributes = _revision_attributes(text)
 
+    corrected_location_match = re.search(
+        r"\b(?:actually|sorry)[, ]+\s*not\s+[A-Za-z][A-Za-z0-9\s.'-]+?\s*-\s*(?:(?:i\s+)?(?:live in|am based in|i'm based in)\s+)?(?P<city>[A-Za-z][A-Za-z0-9\s.'-]+?)(?: now\b| these days\b| currently\b|[.!?,;]|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if corrected_location_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="current_location",
+                value=_normalize_location(corrected_location_match.group("city")),
+                evidence=text,
+                confidence=0.86,
+                attributes=dict(revision_attributes),
+            )
+        )
+
     moved_match = re.search(
         r"\b(?:i\s+)?(?:just\s+)?moved to (?P<city>[A-Za-z][A-Za-z0-9\s.'-]+?)(?: from (?P<from>[A-Za-z][A-Za-z0-9\s.'-]+?))?(?: last\b| now\b| these days\b| recently\b|\sand\b|[.!?,;]|$)",
         text,
@@ -76,7 +94,7 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
         text,
         flags=re.IGNORECASE,
     )
-    if location_match and not moved_match:
+    if location_match and not moved_match and not corrected_location_match:
         memories.append(
             ExtractedMemory(
                 memory_type="fact",
@@ -89,12 +107,30 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
             )
         )
 
+    corrected_work_match = re.search(
+        r"\b(?:actually|sorry)[, ]+\s*not\s+[A-Za-z0-9&.'\s-]+?\s*-\s*(?:i\s+)?(?:work at|work for|joined|started at|just joined|now at)\s+(?P<company>[A-Za-z0-9&.'\s-]+?)(?:\s+as\b|\s+now\b|\s+recently\b|\s+these days\b|[.!?,;]|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if corrected_work_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="employment",
+                value=_normalize_company(corrected_work_match.group("company")),
+                evidence=text,
+                confidence=0.86,
+                attributes=dict(revision_attributes),
+            )
+        )
+
     work_match = re.search(
         r"\b(?:actually\s+|sorry\s+)?(?:i\s+)?(?:work at|work for|joined|started at|just joined|now at)\s+(?P<company>[A-Za-z0-9&.'\s-]+?)(?:\s+as\b|\s+now\b|\s+recently\b|\s+these days\b|[.!?,;]|$)",
         text,
         flags=re.IGNORECASE,
     )
-    if work_match:
+    if work_match and not corrected_work_match:
         memories.append(
             ExtractedMemory(
                 memory_type="fact",
