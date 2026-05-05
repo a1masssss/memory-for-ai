@@ -9,7 +9,10 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_EXTRACTION_ENABLED: ${OPENAI_EXTRACTION_ENABLED:-true}
+      OPENAI_EMBEDDING_ENABLED: ${OPENAI_EMBEDDING_ENABLED:-true}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-20}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-64}
     ports:
       - "8080:8080"
     depends_on:
@@ -37,6 +40,7 @@ services:
       DATABASE_URL: postgresql://memory:memory@postgres:5432/memory
       MEMORY_SERVICE_URL: http://127.0.0.1:8080
       OPENAI_EXTRACTION_ENABLED: "false"
+      OPENAI_EMBEDDING_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy

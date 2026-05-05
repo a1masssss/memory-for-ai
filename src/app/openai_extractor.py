@@ -44,6 +44,12 @@ MEMORY_EXTRACTION_SCHEMA: dict[str, Any] = {
                     "value": {"type": "string"},
                     "evidence": {"type": "string"},
                     "confidence": {"type": "number"},
+                    "attributes": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": ["string", "number", "boolean"]
+                        },
+                    },
                 },
                 "required": [
                     "memory_type",
@@ -82,6 +88,12 @@ employment, current_location, pet, dietary_preference, allergy, family,
 answer_style, visual_style, camera_direction, motion_style, lighting_style,
 prior_success, prior_failure.
 
+Use optional attributes when they materially improve downstream reasoning. Good examples:
+- {"revision_kind":"correction"}
+- {"revision_kind":"conditional"}
+- {"topic":"TypeScript","stance":"negative","subtopic":"generics"}
+- {"previous_location":"NYC"}
+
 Evidence must be a short quote or paraphrase from the user message. Confidence must be 0 to 1.
 If there are no durable memories, return {"memories": []}.
 """.strip()
@@ -94,7 +106,7 @@ async def extract_with_openai(
     model: str,
     base_url: str,
     timeout_seconds: float,
-) -> list[ExtractedMemory]:
+) -> list[ExtractedMemory] | None:
     return await asyncio.to_thread(
         _extract_with_openai_sync,
         messages=messages,
@@ -112,7 +124,7 @@ def _extract_with_openai_sync(
     model: str,
     base_url: str,
     timeout_seconds: float,
-) -> list[ExtractedMemory]:
+) -> list[ExtractedMemory] | None:
     payload = {
         "model": model,
         "instructions": EXTRACTION_INSTRUCTIONS,
@@ -160,17 +172,18 @@ def _extract_with_openai_sync(
             body = json.loads(response.read().decode("utf-8"))
     except (TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
         logger.warning("OpenAI extraction failed; falling back to rules: %s", exc)
-        return []
+        return None
 
     output_text = _extract_output_text(body)
     if not output_text:
-        return []
+        logger.warning("OpenAI extraction returned no output text; falling back to rules")
+        return None
 
     try:
         parsed = json.loads(output_text)
     except json.JSONDecodeError as exc:
         logger.warning("OpenAI extraction returned invalid JSON: %s", exc)
-        return []
+        return None
 
     return _validated_memories(parsed)
 
@@ -203,6 +216,7 @@ def _validated_memories(payload: Any) -> list[ExtractedMemory]:
         key = _clean_token(raw.get("key"))
         value = _clean_text(raw.get("value"))
         evidence = _clean_text(raw.get("evidence"))
+        attributes = _clean_attributes(raw.get("attributes"))
 
         if memory_type not in ALLOWED_MEMORY_TYPES:
             continue
@@ -217,7 +231,10 @@ def _validated_memories(payload: Any) -> list[ExtractedMemory]:
                 value=value,
                 evidence=evidence,
                 confidence=_confidence(raw.get("confidence")),
-                attributes={"source": "openai"},
+                attributes={
+                    "source": "openai",
+                    **attributes,
+                },
             )
         )
     return memories
@@ -237,3 +254,23 @@ def _confidence(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.7
     return max(0.0, min(1.0, confidence))
+
+
+def _clean_attributes(value: Any) -> dict[str, str | float | bool]:
+    if not isinstance(value, dict):
+        return {}
+
+    cleaned: dict[str, str | float | bool] = {}
+    for key, raw in value.items():
+        normalized_key = _clean_token(key)
+        if not normalized_key:
+            continue
+        if isinstance(raw, bool):
+            cleaned[normalized_key] = raw
+        elif isinstance(raw, (int, float)):
+            cleaned[normalized_key] = float(raw)
+        elif isinstance(raw, str):
+            text = _clean_text(raw)
+            if text:
+                cleaned[normalized_key] = text
+    return cleaned

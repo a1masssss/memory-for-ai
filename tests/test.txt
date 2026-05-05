@@ -1,0 +1,35 @@
+curl -s "http://localhost:8080/health"
+
+curl -s -X POST "http://localhost:8080/turns" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "manual-1",
+    "user_id": "user-manual",
+    "messages": [
+      {
+        "role": "user",
+        "content": "I just moved to Berlin from NYC. I work at Notion as a PM. I am vegetarian and allergic to shellfish."
+      },
+      {
+        "role": "assistant",
+        "content": "Got it. I will keep that in mind."
+      }
+    ],
+    "timestamp": "2025-03-15T10:30:00Z",
+    "metadata": {
+      "source": "manual-test"
+    }
+  }'
+
+curl -s -X POST "http://localhost:8080/recall" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Where does this user live and where do they work?",
+    "session_id": "manual-2",
+    "user_id": "user-manual",
+    "max_tokens": 512
+  }'
+
+curl -s "http://localhost:8080/users/user-manual/memories"
+
+curl -i -X DELETE "http://localhost:8080/users/user-manual"

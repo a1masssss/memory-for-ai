@@ -80,6 +80,7 @@ class UserMemory(BaseModel):
     key: str
     value: str
     confidence: float
+    attributes: dict[str, Any] = Field(default_factory=dict)
     source_session: str
     source_turn: str
     created_at: datetime

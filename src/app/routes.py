@@ -6,8 +6,9 @@ from typing import Any
 from fastapi import APIRouter, Response, status
 
 from . import db
+from .embeddings import embed_text, embed_texts, vector_literal
 from .extractor import extract_memories
-from .memory_store import save_extracted_memories
+from .memory_store import memory_embedding_text, save_extracted_memories
 from .recall import build_recall_response
 from .schemas import (
     RecallRequest,
@@ -34,6 +35,10 @@ async def create_turn(payload: TurnCreate) -> TurnCreated:
         f"{message.role}: {message.content}" for message in payload.messages
     )
     extracted_memories = await extract_memories(payload.messages)
+    turn_embedding = await embed_text(content_text)
+    memory_embeddings = await embed_texts(
+        [memory_embedding_text(memory) for memory in extracted_memories]
+    ) if extracted_memories else []
     async with db.transaction() as connection:
         row = await connection.fetchrow(
             """
@@ -43,9 +48,10 @@ async def create_turn(payload: TurnCreate) -> TurnCreated:
                 messages,
                 timestamp,
                 metadata,
-                content_text
+                content_text,
+                embedding
             )
-            VALUES ($1, $2, $3::jsonb, $4, $5::jsonb, $6)
+            VALUES ($1, $2, $3::jsonb, $4, $5::jsonb, $6, $7::vector)
             RETURNING id
             """,
             payload.session_id,
@@ -54,6 +60,7 @@ async def create_turn(payload: TurnCreate) -> TurnCreated:
             payload.timestamp,
             json.dumps(payload.metadata),
             content_text,
+            vector_literal(turn_embedding),
         )
         if row is None:
             raise RuntimeError("Failed to create turn")
@@ -61,6 +68,7 @@ async def create_turn(payload: TurnCreate) -> TurnCreated:
         await save_extracted_memories(
             connection,
             memories=extracted_memories,
+            memory_embeddings=memory_embeddings,
             user_id=payload.user_id,
             session_id=payload.session_id,
             turn_id=turn_id,
@@ -82,12 +90,20 @@ async def recall(payload: RecallRequest) -> RecallResponse:
 
 @router.post("/search", response_model=SearchResponse)
 async def search(payload: SearchRequest) -> SearchResponse:
+    query_embedding = vector_literal(await embed_text(payload.query))
     rows = await db.fetch(
         """
         WITH memory_results AS (
             SELECT
                 value AS content,
-                ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) + 0.5 AS score,
+                (
+                    ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) * 1.8
+                    + CASE
+                        WHEN embedding IS NOT NULL THEN (1 - (embedding <=> $5::vector)) * 1.2
+                        ELSE 0
+                      END
+                    + 0.5
+                ) AS score,
                 source_session AS session_id,
                 updated_at AS timestamp,
                 jsonb_build_object(
@@ -102,12 +118,21 @@ async def search(payload: SearchRequest) -> SearchResponse:
                 active = true
                 AND ($2::text IS NULL OR source_session = $2)
                 AND ($3::text IS NULL OR user_id = $3)
-                AND search_vector @@ websearch_to_tsquery('english', $1)
+                AND (
+                    search_vector @@ websearch_to_tsquery('english', $1)
+                    OR (embedding IS NOT NULL AND (1 - (embedding <=> $5::vector)) > 0.18)
+                )
         ),
         turn_results AS (
             SELECT
                 content_text AS content,
-                ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) AS score,
+                (
+                    ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) * 1.8
+                    + CASE
+                        WHEN embedding IS NOT NULL THEN (1 - (embedding <=> $5::vector)) * 1.1
+                        ELSE 0
+                      END
+                ) AS score,
                 session_id,
                 timestamp,
                 metadata || jsonb_build_object('kind', 'turn') AS metadata
@@ -115,7 +140,10 @@ async def search(payload: SearchRequest) -> SearchResponse:
             WHERE
                 ($2::text IS NULL OR session_id = $2)
                 AND ($3::text IS NULL OR user_id = $3)
-                AND search_vector @@ websearch_to_tsquery('english', $1)
+                AND (
+                    search_vector @@ websearch_to_tsquery('english', $1)
+                    OR (embedding IS NOT NULL AND (1 - (embedding <=> $5::vector)) > 0.2)
+                )
         )
         SELECT
             content,
@@ -135,6 +163,7 @@ async def search(payload: SearchRequest) -> SearchResponse:
         payload.session_id,
         payload.user_id,
         payload.limit,
+        query_embedding,
     )
     return SearchResponse(
         results=[
@@ -160,6 +189,7 @@ async def get_user_memories(user_id: str) -> UserMemoriesResponse:
             key,
             value,
             confidence,
+            attributes,
             source_session,
             source_turn,
             created_at,
@@ -180,6 +210,7 @@ async def get_user_memories(user_id: str) -> UserMemoriesResponse:
                 "key": row["key"],
                 "value": row["value"],
                 "confidence": float(row["confidence"]),
+                "attributes": _json_dict(row["attributes"]),
                 "source_session": row["source_session"],
                 "source_turn": str(row["source_turn"]),
                 "created_at": row["created_at"],

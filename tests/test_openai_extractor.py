@@ -41,6 +41,10 @@ def test_openai_extractor_parses_structured_output(monkeypatch) -> None:
                                 "value": "Works at Notion",
                                 "evidence": "I just joined Notion as a PM.",
                                 "confidence": 0.92,
+                                "attributes": {
+                                    "revision_kind": "correction",
+                                    "topic": "employment",
+                                },
                             }
                         ]
                     }
@@ -67,7 +71,11 @@ def test_openai_extractor_parses_structured_output(monkeypatch) -> None:
     assert memories[0].category == "personal_context"
     assert memories[0].key == "employment"
     assert memories[0].value == "Works at Notion"
-    assert memories[0].attributes == {"source": "openai"}
+    assert memories[0].attributes == {
+        "source": "openai",
+        "revision_kind": "correction",
+        "topic": "employment",
+    }
 
 
 def test_openai_extractor_skips_invalid_memories(monkeypatch) -> None:

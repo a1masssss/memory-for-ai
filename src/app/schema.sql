@@ -25,15 +25,21 @@ CREATE TABLE IF NOT EXISTS turns (
     timestamp timestamptz NOT NULL,
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     content_text text NOT NULL,
+    embedding vector(64),
     search_vector tsvector NOT NULL DEFAULT ''::tsvector,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE turns
+ADD COLUMN IF NOT EXISTS embedding vector(64);
 
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns (session_id);
 CREATE INDEX IF NOT EXISTS idx_turns_user ON turns (user_id);
 CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns (timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_turns_search ON turns USING gin (search_vector);
 CREATE INDEX IF NOT EXISTS idx_turns_metadata ON turns USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_turns_embedding
+    ON turns USING ivfflat (embedding vector_cosine_ops) WITH (lists = 32);
 
 CREATE TABLE IF NOT EXISTS memories (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -49,10 +55,14 @@ CREATE TABLE IF NOT EXISTS memories (
     source_turn uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
     active boolean NOT NULL DEFAULT true,
     supersedes uuid REFERENCES memories(id) ON DELETE SET NULL,
+    embedding vector(64),
     search_vector tsvector NOT NULL DEFAULT ''::tsvector,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE memories
+ADD COLUMN IF NOT EXISTS embedding vector(64);
 
 CREATE INDEX IF NOT EXISTS idx_memories_user ON memories (user_id);
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories (source_session);
@@ -60,6 +70,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_active ON memories (active);
 CREATE INDEX IF NOT EXISTS idx_memories_category_key ON memories (category, key);
 CREATE INDEX IF NOT EXISTS idx_memories_search ON memories USING gin (search_vector);
 CREATE INDEX IF NOT EXISTS idx_memories_attributes ON memories USING gin (attributes jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_memories_embedding
+    ON memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 32);
 
 CREATE TABLE IF NOT EXISTS memory_links (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

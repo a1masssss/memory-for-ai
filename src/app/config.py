@@ -15,7 +15,10 @@ class ApplyApiSettings(BaseSettings):
     openai_model: str = "gpt-5-mini"
     openai_base_url: str = "https://api.openai.com/v1"
     openai_extraction_enabled: bool = True
+    openai_embedding_enabled: bool = True
+    openai_embedding_model: str = "text-embedding-3-small"
     openai_timeout_seconds: float = 20.0
+    embedding_dimensions: int = 64
 
 
 @lru_cache

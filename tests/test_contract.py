@@ -244,6 +244,229 @@ def test_generic_facts_evolve_and_are_recalled(client: httpx.Client) -> None:
     assert "Stripe" not in context
 
 
+def test_recall_handles_paraphrased_location_and_employment_queries(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-paraphrase-facts"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "paraphrase-facts-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I just moved to Berlin from NYC and now work at Notion as a PM.",
+                }
+            ],
+            "timestamp": "2025-03-18T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    location_recall = client.post(
+        "/recall",
+        json={
+            "query": "What city does this user call home these days?",
+            "session_id": "paraphrase-facts-2",
+            "user_id": user_id,
+            "max_tokens": 128,
+        },
+    )
+    assert location_recall.status_code == 200
+    assert "Berlin" in location_recall.json()["context"]
+
+    employment_recall = client.post(
+        "/recall",
+        json={
+            "query": "Which company are they at now?",
+            "session_id": "paraphrase-facts-3",
+            "user_id": user_id,
+            "max_tokens": 128,
+        },
+    )
+    assert employment_recall.status_code == 200
+    assert "Notion" in employment_recall.json()["context"]
+
+
+def test_recall_handles_paraphrased_food_and_reply_style_queries(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-paraphrase-preferences"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "paraphrase-preferences-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I am vegetarian, allergic to shellfish, and please keep answers concise and direct.",
+                }
+            ],
+            "timestamp": "2025-03-18T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    food_recall = client.post(
+        "/recall",
+        json={
+            "query": "Any food restrictions I should keep in mind?",
+            "session_id": "paraphrase-preferences-2",
+            "user_id": user_id,
+            "max_tokens": 128,
+        },
+    )
+    assert food_recall.status_code == 200
+    food_context = food_recall.json()["context"]
+    assert "Vegetarian" in food_context
+    assert "Allergic to shellfish" in food_context
+
+    style_recall = client.post(
+        "/recall",
+        json={
+            "query": "How chatty should my replies be?",
+            "session_id": "paraphrase-preferences-3",
+            "user_id": user_id,
+            "max_tokens": 128,
+        },
+    )
+    assert style_recall.status_code == 200
+    assert "Prefers concise, direct answers" in style_recall.json()["context"]
+
+
+def test_lowercase_facts_and_style_preferences_are_extracted(client: httpx.Client) -> None:
+    user_id = "test-lowercase-facts"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "lowercase-facts-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "i work at notion now, i'm based in berlin these days, and please keep answers brief and direct.",
+                }
+            ],
+            "timestamp": "2025-03-18T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    memories = client.get(f"/users/{user_id}/memories")
+    assert memories.status_code == 200
+    values = {memory["value"] for memory in memories.json()["memories"]}
+    assert "Notion" in values
+    assert "Berlin" in values
+    assert "Prefers concise, direct answers" in values
+
+
+def test_fact_correction_supersedes_prior_value(client: httpx.Client) -> None:
+    user_id = "test-fact-correction"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "fact-correction-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live in Berlin.",
+                }
+            ],
+            "timestamp": "2025-03-15T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+    client.post(
+        "/turns",
+        json={
+            "session_id": "fact-correction-2",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Actually I live in Munich now.",
+                }
+            ],
+            "timestamp": "2025-03-16T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    memories = client.get(f"/users/{user_id}/memories").json()["memories"]
+    locations = [memory for memory in memories if memory["key"] == "current_location"]
+    assert any(memory["value"] == "Munich" and memory["active"] for memory in locations)
+    assert any(memory["value"] == "Berlin" and not memory["active"] for memory in locations)
+    assert any(
+        memory["value"] == "Munich"
+        and memory["attributes"].get("revision_kind") == "correction"
+        for memory in locations
+    )
+
+
+def test_opinion_history_preserves_arc_and_attributes(client: httpx.Client) -> None:
+    user_id = "test-opinion-arc"
+    client.delete(f"/users/{user_id}")
+
+    turns = [
+        "I love TypeScript.",
+        "TypeScript generics are getting annoying.",
+        "TypeScript is fine for big projects, but I'd use Python for scripts.",
+    ]
+    for index, content in enumerate(turns, start=1):
+        client.post(
+            "/turns",
+            json={
+                "session_id": f"opinion-arc-{index}",
+                "user_id": user_id,
+                "messages": [{"role": "user", "content": content}],
+                "timestamp": f"2025-03-1{index}T10:30:00Z",
+                "metadata": {},
+            },
+        ).raise_for_status()
+
+    memories = client.get(f"/users/{user_id}/memories")
+    assert memories.status_code == 200
+    opinion_memories = [
+        memory
+        for memory in memories.json()["memories"]
+        if memory["key"] == "typescript"
+    ]
+    values = {memory["value"] for memory in opinion_memories}
+    stances = {memory["attributes"].get("stance") for memory in opinion_memories}
+
+    assert "Likes TypeScript" in values
+    assert "TypeScript generics are getting annoying" in values
+    assert "TypeScript is fine for big projects" in values
+    assert {"positive", "negative", "conditional"} <= stances
+    assert all(memory["active"] for memory in opinion_memories)
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "What does this user think about TypeScript?",
+            "session_id": "opinion-arc-4",
+            "user_id": user_id,
+            "max_tokens": 512,
+        },
+    )
+    assert recall.status_code == 200
+    context = recall.json()["context"]
+    assert "Likes TypeScript" in context
+    assert "TypeScript generics are getting annoying" in context
+    assert "TypeScript is fine for big projects" in context
+
+
 def test_search_returns_structured_memory_results(client: httpx.Client) -> None:
     user_id = "test-search-memory"
     client.delete(f"/users/{user_id}")
@@ -279,6 +502,157 @@ def test_search_returns_structured_memory_results(client: httpx.Client) -> None:
     assert results
     assert any(result["content"] == "raw documentary realism" for result in results)
     assert any(result["metadata"].get("kind") == "memory" for result in results)
+
+
+def test_recall_includes_recent_raw_turn_when_extractor_misses_it(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-recent-context"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "recent-context-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I'm preparing for a system design interview at a FAANG company next month.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Got it. We can focus on distributed systems and tradeoffs.",
+                },
+            ],
+            "timestamp": "2025-03-15T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "What is the user preparing for?",
+            "session_id": "recent-context-2",
+            "user_id": user_id,
+            "max_tokens": 256,
+        },
+    )
+
+    assert recall.status_code == 200
+    body = recall.json()
+    assert "Relevant From Recent Conversations" in body["context"]
+    assert "system design interview" in body["context"]
+    assert body["citations"]
+
+
+def test_recall_uses_global_ranking_under_tight_budget(client: httpx.Client) -> None:
+    user_id = "test-global-budget"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "global-budget-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "I work at Stripe as an engineer. I just moved to Berlin from NYC last month. "
+                        "I am vegetarian and allergic to shellfish. My dog is named Biscuit. "
+                        "Please give me concise, direct answers."
+                    ),
+                }
+            ],
+            "timestamp": "2025-03-15T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "How should I answer this user?",
+            "session_id": "global-budget-2",
+            "user_id": user_id,
+            "max_tokens": 20,
+        },
+    )
+
+    assert recall.status_code == 200
+    context = recall.json()["context"]
+    assert "Communication Preferences" in context
+    assert "Prefers concise, direct answers" in context
+
+
+def test_recall_can_multi_hop_across_linked_personal_memories(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-multi-hop"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "multi-hop-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I was walking Biscuit this morning.",
+                }
+            ],
+            "timestamp": "2025-03-15T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+    client.post(
+        "/turns",
+        json={
+            "session_id": "multi-hop-2",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I just moved to Berlin from NYC last month.",
+                }
+            ],
+            "timestamp": "2025-03-16T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+    client.post(
+        "/turns",
+        json={
+            "session_id": "multi-hop-3",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I work at Notion as a PM and I am vegetarian.",
+                }
+            ],
+            "timestamp": "2025-03-17T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": "Which city does Biscuit's owner call home?",
+            "session_id": "multi-hop-4",
+            "user_id": user_id,
+            "max_tokens": 24,
+        },
+    )
+
+    assert recall.status_code == 200
+    context = recall.json()["context"]
+    assert "Dog named Biscuit" in context
+    assert "Berlin" in context
 
 
 def test_unicode_turn_does_not_crash(client: httpx.Client) -> None:
