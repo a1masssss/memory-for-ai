@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 
 import httpx
 
+from app.schemas import MAX_MESSAGE_CONTENT_LENGTH, MAX_MESSAGES_PER_TURN
+
 
 def test_health(client: httpx.Client) -> None:
     response = client.get("/health")
@@ -242,6 +244,67 @@ def test_generic_facts_evolve_and_are_recalled(client: httpx.Client) -> None:
     assert "Berlin" in context
     assert "Notion" in context
     assert "Stripe" not in context
+
+
+def test_broader_generic_facts_are_structured_and_recalled(
+    client: httpx.Client,
+) -> None:
+    user_id = "test-broader-generic-facts"
+    client.delete(f"/users/{user_id}")
+
+    client.post(
+        "/turns",
+        json={
+            "session_id": "broader-generic-1",
+            "user_id": user_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "My name is Alex. I'm a PM at Notion, based out of Berlin. "
+                        "I have a cat named Mochi. My son's name is Leo. "
+                        "I have a peanut allergy and don't eat meat. "
+                        "Please give me detailed step-by-step answers."
+                    ),
+                }
+            ],
+            "timestamp": "2025-03-18T10:30:00Z",
+            "metadata": {},
+        },
+    ).raise_for_status()
+
+    memories = client.get(f"/users/{user_id}/memories")
+    assert memories.status_code == 200
+    values = {memory["value"] for memory in memories.json()["memories"]}
+    assert "Alex" in values
+    assert "Notion" in values
+    assert "PM" in values
+    assert "Berlin" in values
+    assert "Cat named Mochi" in values
+    assert "Has a son named Leo" in values
+    assert "Allergic to peanuts" in values
+    assert "Vegetarian" in values
+    assert "Prefers detailed, step-by-step answers" in values
+
+    recall = client.post(
+        "/recall",
+        json={
+            "query": (
+                "Who is this user, and what should I remember about their role, "
+                "family, pet, food restrictions, and answer style?"
+            ),
+            "session_id": "broader-generic-2",
+            "user_id": user_id,
+            "max_tokens": 512,
+        },
+    )
+    assert recall.status_code == 200
+    context = recall.json()["context"]
+    assert "Alex" in context
+    assert "PM" in context
+    assert "Cat named Mochi" in context
+    assert "Allergic to peanuts" in context
+    assert "Prefers detailed, step-by-step answers" in context
 
 
 def test_recall_handles_paraphrased_location_and_employment_queries(
@@ -738,11 +801,11 @@ def test_recall_includes_recent_raw_turn_when_extractor_misses_it(
             "messages": [
                 {
                     "role": "user",
-                    "content": "I'm preparing for a system design interview at a FAANG company next month.",
+                    "content": "The repo codename is blue-heron and the failing shard is allocator-7.",
                 },
                 {
                     "role": "assistant",
-                    "content": "Got it. We can focus on distributed systems and tradeoffs.",
+                    "content": "Got it. I will keep those debugging details in view.",
                 },
             ],
             "timestamp": "2025-03-15T10:30:00Z",
@@ -753,7 +816,7 @@ def test_recall_includes_recent_raw_turn_when_extractor_misses_it(
     recall = client.post(
         "/recall",
         json={
-            "query": "What is the user preparing for?",
+            "query": "Which codename and failing shard did the user mention?",
             "session_id": "recent-context-2",
             "user_id": user_id,
             "max_tokens": 256,
@@ -763,7 +826,8 @@ def test_recall_includes_recent_raw_turn_when_extractor_misses_it(
     assert recall.status_code == 200
     body = recall.json()
     assert "Relevant From Recent Conversations" in body["context"]
-    assert "system design interview" in body["context"]
+    assert "blue-heron" in body["context"]
+    assert "allocator-7" in body["context"]
     assert body["citations"]
 
 
@@ -1210,7 +1274,37 @@ def test_request_validation_rejects_invalid_limits_and_roles(
             "limit": 100,
         },
     )
+    too_many_messages = client.post(
+        "/turns",
+        json={
+            "session_id": "too-many-messages",
+            "user_id": "bad-role-user",
+            "messages": [
+                {"role": "user", "content": "hello"}
+                for _ in range(MAX_MESSAGES_PER_TURN + 1)
+            ],
+            "timestamp": "2025-03-25T10:30:00Z",
+            "metadata": {},
+        },
+    )
+    too_large_message = client.post(
+        "/turns",
+        json={
+            "session_id": "too-large-message",
+            "user_id": "bad-role-user",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "x" * (MAX_MESSAGE_CONTENT_LENGTH + 1),
+                }
+            ],
+            "timestamp": "2025-03-25T10:30:00Z",
+            "metadata": {},
+        },
+    )
 
     assert bad_role.status_code == 422
     assert too_many_tokens.status_code == 422
     assert bad_search_limit.status_code == 422
+    assert too_many_messages.status_code == 422
+    assert too_large_message.status_code == 422

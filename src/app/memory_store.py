@@ -10,8 +10,10 @@ from .memory_types import ExtractedMemory
 
 
 MUTABLE_MEMORY_KEYS = {
+    ("personal_context", "name"),
     ("personal_context", "current_location"),
     ("personal_context", "employment"),
+    ("personal_context", "current_role"),
     ("personal_context", "dietary_preference"),
     ("communication", "answer_style"),
     ("creative_style", "visual_style"),

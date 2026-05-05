@@ -36,6 +36,7 @@ def extract_rule_based_memories(messages: list[Message]) -> list[ExtractedMemory
 
     for text in user_texts:
         memories.extend(_extract_personal_facts(text))
+        memories.extend(_extract_events(text))
         memories.extend(_extract_creative_preferences(text))
         memories.extend(_extract_generation_feedback(text))
 
@@ -46,6 +47,24 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
     memories: list[ExtractedMemory] = []
     lowered = text.lower()
     revision_attributes = _revision_attributes(text)
+
+    name_match = re.search(
+        r"\b(?:my name is|call me)\s+(?P<name>[A-Za-z][A-Za-z'-]{1,40})(?:[.!?,;]|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if name_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="name",
+                value=_normalize_person_name(name_match.group("name")),
+                evidence=text,
+                confidence=0.82,
+                attributes=dict(revision_attributes),
+            )
+        )
 
     corrected_location_match = re.search(
         r"\b(?:actually|sorry)[, ]+\s*not\s+[A-Za-z][A-Za-z0-9\s.'-]+?\s*-\s*(?:(?:i\s+)?(?:live in|am based in|i'm based in)\s+)?(?P<city>[A-Za-z][A-Za-z0-9\s.'-]+?)(?: now\b| these days\b| currently\b|[.!?,;]|$)",
@@ -66,7 +85,7 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
         )
 
     moved_match = re.search(
-        r"\b(?:i\s+)?(?:just\s+)?moved to (?P<city>[A-Za-z][A-Za-z0-9\s.'-]+?)(?: from (?P<from>[A-Za-z][A-Za-z0-9\s.'-]+?))?(?: last\b| now\b| these days\b| recently\b|\sand\b|[.!?,;]|$)",
+        r"\b(?:i\s+)?(?:just\s+)?(?:moved|relocated) to (?P<city>[A-Za-z][A-Za-z0-9\s.'-]+?)(?: from (?P<from>[A-Za-z][A-Za-z0-9\s.'-]+?))?(?: last\b| now\b| these days\b| recently\b|\sand\b|[.!?,;]|$)",
         text,
         flags=re.IGNORECASE,
     )
@@ -90,7 +109,7 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
         )
 
     location_match = re.search(
-        r"\b(?:actually\s+|sorry\s+)?(?:i\s+)?(?:live in|am based in|i'm based in|currently live in|currently based in)\s+(?P<city>[A-Za-z][A-Za-z0-9\s.'-]+?)(?: now\b| these days\b| currently\b|[.!?,;]|$)",
+        r"\b(?:actually\s+|sorry\s+)?(?:i\s+)?(?:live in|am based in|i'm based in|based out of|currently live in|currently based in|home base is|call home)\s+(?P<city>[A-Za-z][A-Za-z0-9\s.'-]+?)(?: now\b| these days\b| currently\b|[.!?,;]|$)",
         text,
         flags=re.IGNORECASE,
     )
@@ -103,6 +122,28 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
                 value=_normalize_location(location_match.group("city")),
                 evidence=text,
                 confidence=0.84,
+                attributes=dict(revision_attributes),
+            )
+        )
+
+    currently_in_match = re.search(
+        r"\b(?:i'm|i am|currently)\s+in\s+(?P<city>[A-Z][A-Za-z0-9\s.'-]+?)(?: now\b| these days\b| currently\b|[.!?,;]|$)",
+        text,
+    )
+    if (
+        currently_in_match
+        and not moved_match
+        and not corrected_location_match
+        and not location_match
+    ):
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="current_location",
+                value=_normalize_location(currently_in_match.group("city")),
+                evidence=text,
+                confidence=0.76,
                 attributes=dict(revision_attributes),
             )
         )
@@ -143,22 +184,9 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
             )
         )
 
-    pet_match = re.search(
-        r"\b(?:my dog(?: is named)?|dog named|walking|walked|taking|took)\s+(?P<pet>[A-Za-z][A-Za-z'-]+)\b",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if pet_match:
-        memories.append(
-            ExtractedMemory(
-                memory_type="fact",
-                category="personal_context",
-                key="pet",
-                value=f"Dog named {_normalize_person_name(pet_match.group('pet'))}",
-                evidence=text,
-                confidence=0.8,
-            )
-        )
+    memories.extend(_extract_employment_details(text, revision_attributes))
+
+    memories.extend(_extract_pet_memories(text))
 
     if "vegetarian" in lowered or "vegan" in lowered:
         dietary_value = "Vegan" if "vegan" in lowered else "Vegetarian"
@@ -173,6 +201,52 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
                 attributes=dict(revision_attributes),
             )
         )
+
+    if "pescatarian" in lowered:
+        memories.append(
+            ExtractedMemory(
+                memory_type="preference",
+                category="personal_context",
+                key="dietary_preference",
+                value="Pescatarian",
+                evidence=text,
+                confidence=0.82,
+                attributes=dict(revision_attributes),
+            )
+        )
+
+    if any(phrase in lowered for phrase in ("don't eat meat", "do not eat meat", "no meat")):
+        memories.append(
+            ExtractedMemory(
+                memory_type="preference",
+                category="personal_context",
+                key="dietary_preference",
+                value="Vegetarian",
+                evidence=text,
+                confidence=0.78,
+                attributes=dict(revision_attributes),
+            )
+        )
+
+    dietary_avoidance_match = re.search(
+        r"\b(?:avoid|don't eat|do not eat|can't eat|cannot eat)\s+(?P<food>[a-zA-Z0-9 ,&'-]+?)(?:[.!?,;]| and I\b| but\b|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if dietary_avoidance_match:
+        avoided_food = _clean_capture(dietary_avoidance_match.group("food")).lower()
+        if avoided_food and avoided_food != "meat":
+            memories.append(
+                ExtractedMemory(
+                    memory_type="preference",
+                    category="personal_context",
+                    key="dietary_preference",
+                    value=f"Avoids {avoided_food}",
+                    evidence=text,
+                    confidence=0.76,
+                    attributes=dict(revision_attributes),
+                )
+            )
 
     allergy_match = re.search(
         r"\b(?:allergic to|allergy to)\s+(?P<allergy>[a-zA-Z0-9 ,&'-]+?)(?:[.!?,;]| and I\b| but\b|$)",
@@ -192,22 +266,38 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
             )
         )
 
-    child_match = re.search(
-        r"\b(?:my son|my daughter|my child|kid named|child named)\s+(?P<name>[A-Za-z][A-Za-z'-]+)\b",
+    allergy_noun_match = re.search(
+        r"\b(?:have|has|with)\s+(?:a|an)?\s*(?P<allergy>[a-zA-Z0-9 ,&'-]+?)\s+allerg(?:y|ies)\b",
         text,
         flags=re.IGNORECASE,
     )
-    if child_match:
+    if allergy_noun_match:
         memories.append(
             ExtractedMemory(
                 memory_type="fact",
                 category="personal_context",
-                key="family",
-                value=f"Has a child named {_normalize_person_name(child_match.group('name'))}",
+                key="allergy",
+                value=f"Allergic to {_pluralize_food(_clean_capture(allergy_noun_match.group('allergy')).lower())}",
                 evidence=text,
                 confidence=0.78,
+                attributes=dict(revision_attributes),
             )
         )
+
+    if "lactose intolerant" in lowered:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="allergy",
+                value="Lactose intolerant",
+                evidence=text,
+                confidence=0.78,
+                attributes=dict(revision_attributes),
+            )
+        )
+
+    memories.extend(_extract_family_memories(text))
 
     if any(
         phrase in lowered
@@ -233,7 +323,251 @@ def _extract_personal_facts(text: str) -> list[ExtractedMemory]:
             )
         )
 
+    if (
+        any(
+            phrase in lowered
+            for phrase in (
+                "detailed answers",
+                "thorough answers",
+                "step-by-step",
+                "step by step",
+                "explain the reasoning",
+                "more detail",
+            )
+        )
+        and not any(
+            phrase in lowered
+            for phrase in ("concise", "brief", "short answers", "keep it brief")
+        )
+    ):
+        memories.append(
+            ExtractedMemory(
+                memory_type="preference",
+                category="communication",
+                key="answer_style",
+                value="Prefers detailed, step-by-step answers",
+                evidence=text,
+                confidence=0.76,
+                attributes=dict(revision_attributes),
+            )
+        )
+
     memories.extend(_extract_opinions(text))
+    return memories
+
+
+def _extract_employment_details(
+    text: str,
+    revision_attributes: dict[str, str],
+) -> list[ExtractedMemory]:
+    memories: list[ExtractedMemory] = []
+    terminator = r"(?=\s+now\b|\s+these days\b|\s+recently\b|[.!?,;]|$)"
+    patterns = (
+        re.compile(
+            rf"\b(?:i'm|i am)\s+(?:an?|the)?\s*(?P<role>[A-Za-z][A-Za-z0-9&+/\s.'-]{{1,60}}?)\s+at\s+(?P<company>[A-Za-z0-9&.'\s-]+?){terminator}",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            rf"\b(?:i\s+)?work\s+as\s+(?:an?|the)?\s*(?P<role>[A-Za-z][A-Za-z0-9&+/\s.'-]{{1,60}}?)\s+(?:at|for)\s+(?P<company>[A-Za-z0-9&.'\s-]+?){terminator}",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            rf"\b(?:i\s+)?(?:work at|work for|joined|started at|just joined|now at)\s+(?P<company>[A-Za-z0-9&.'\s-]+?)\s+as\s+(?:an?|the)?\s*(?P<role>[A-Za-z][A-Za-z0-9&+/\s.'-]{{1,60}}?){terminator}",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            rf"\b(?:my employer is|employer is|new job at|started a new job at|took a role at)\s+(?P<company>[A-Za-z0-9&.'\s-]+?){terminator}",
+            flags=re.IGNORECASE,
+        ),
+    )
+
+    for pattern in patterns:
+        match = pattern.search(text)
+        if match is None:
+            continue
+
+        role = match.groupdict().get("role")
+        if role and not _looks_like_role(role):
+            continue
+
+        company = _normalize_company(match.group("company"))
+        if not _looks_like_company(company):
+            continue
+
+        if company:
+            memories.append(
+                ExtractedMemory(
+                    memory_type="fact",
+                    category="personal_context",
+                    key="employment",
+                    value=company,
+                    evidence=text,
+                    confidence=0.82,
+                    attributes=dict(revision_attributes),
+                )
+            )
+
+        if role:
+            memories.append(
+                ExtractedMemory(
+                    memory_type="fact",
+                    category="personal_context",
+                    key="current_role",
+                    value=_normalize_role(role),
+                    evidence=text,
+                    confidence=0.78,
+                    attributes=dict(revision_attributes),
+                )
+            )
+        break
+
+    return memories
+
+
+def _extract_pet_memories(text: str) -> list[ExtractedMemory]:
+    memories: list[ExtractedMemory] = []
+    patterns = (
+        re.compile(
+            r"\b(?:my|our)?\s*(?P<animal>dog|cat)\s+(?:is\s+)?(?:named|called)\s+(?P<pet>[A-Za-z][A-Za-z'-]+)\b",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:i|we)\s+have\s+(?:a|an)\s+(?P<animal>dog|cat)\s+(?:named|called)\s+(?P<pet>[A-Za-z][A-Za-z'-]+)\b",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bmy\s+(?P<animal>dog|cat)'?s\s+name\s+is\s+(?P<pet>[A-Za-z][A-Za-z'-]+)\b",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?P<pet>[A-Z][A-Za-z'-]+)\s+is\s+(?:my|our)\s+(?P<animal>dog|cat)\b",
+        ),
+    )
+    for pattern in patterns:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        animal = match.group("animal").title()
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="pet",
+                value=f"{animal} named {_normalize_person_name(match.group('pet'))}",
+                evidence=text,
+                confidence=0.82,
+            )
+        )
+
+    walking_match = re.search(
+        r"\b(?:walking|walked|taking|took)\s+(?P<pet>[A-Za-z][A-Za-z'-]+)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if walking_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="pet",
+                value=f"Dog named {_normalize_person_name(walking_match.group('pet'))}",
+                evidence=text,
+                confidence=0.74,
+                attributes={"inferred_from": "walking"},
+            )
+        )
+
+    return memories
+
+
+def _extract_family_memories(text: str) -> list[ExtractedMemory]:
+    memories: list[ExtractedMemory] = []
+    patterns = (
+        re.compile(
+            r"\bmy\s+(?P<relation>son|daughter|child|kid)(?:'s name)?\s+(?:is\s+)?(?:named\s+|called\s+)?(?P<name>[A-Za-z][A-Za-z'-]+)\b",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:i|we)\s+have\s+(?:a|an)\s+(?P<relation>son|daughter|child|kid)\s+(?:named|called)\s+(?P<name>[A-Za-z][A-Za-z'-]+)\b",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bmy\s+(?P<relation>wife|husband|partner|spouse)\s+(?:is\s+)?(?:named\s+|called\s+)?(?P<name>[A-Za-z][A-Za-z'-]+)\b",
+            flags=re.IGNORECASE,
+        ),
+    )
+    for pattern in patterns:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        relation = _normalize_relationship(match.group("relation"))
+        memories.append(
+            ExtractedMemory(
+                memory_type="fact",
+                category="personal_context",
+                key="family",
+                value=f"Has a {relation} named {_normalize_person_name(match.group('name'))}",
+                evidence=text,
+                confidence=0.78,
+            )
+        )
+    return memories
+
+
+def _extract_events(text: str) -> list[ExtractedMemory]:
+    memories: list[ExtractedMemory] = []
+    event_boundary = r"(?=\s+(?:next|this|tomorrow|today|on|in)\b|[.!?,;]|$)"
+    preparing_match = re.search(
+        rf"\b(?:i'm|i am|we're|we are)?\s*(?:preparing|studying|getting ready)\s+for\s+(?P<event>[A-Za-z0-9&+/\s.'-]+?){event_boundary}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if preparing_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="event",
+                category="project_goal",
+                key="upcoming_focus",
+                value=f"Preparing for {_sentence_fragment(preparing_match.group('event'))}",
+                evidence=text,
+                confidence=0.74,
+            )
+        )
+
+    interview_match = re.search(
+        rf"\b(?:i\s+have|i've got|i got)\s+(?:an?|the)?\s*(?P<event>[A-Za-z0-9&+/\s.'-]*interview[A-Za-z0-9&+/\s.'-]*?){event_boundary}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if interview_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="event",
+                category="project_goal",
+                key="upcoming_focus",
+                value=_sentence_fragment(interview_match.group("event")),
+                evidence=text,
+                confidence=0.72,
+            )
+        )
+
+    travel_match = re.search(
+        r"\b(?:planning|booking|taking)\s+(?:a\s+)?trip\s+to\s+(?P<place>[A-Za-z][A-Za-z0-9\s.'-]+?)(?:\s+next\b|\s+this\b|[.!?,;]|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if travel_match:
+        memories.append(
+            ExtractedMemory(
+                memory_type="event",
+                category="project_goal",
+                key="travel_plan",
+                value=f"Planning a trip to {_normalize_location(travel_match.group('place'))}",
+                evidence=text,
+                confidence=0.72,
+            )
+        )
+
     return memories
 
 
@@ -540,9 +874,53 @@ def _normalize_company(value: str) -> str:
     return cleaned
 
 
+def _normalize_role(value: str) -> str:
+    cleaned = _clean_capture(value)
+    cleaned = re.sub(r"^(?:a|an|the)\s+", "", cleaned, flags=re.IGNORECASE)
+    lower = cleaned.lower()
+    if lower in {"pm", "swe", "ml", "ai"}:
+        return lower.upper()
+    return cleaned.title() if cleaned.islower() else cleaned
+
+
+def _looks_like_role(value: str) -> bool:
+    lowered = _clean_capture(value).lower()
+    if not lowered:
+        return False
+    if lowered.startswith(("preparing", "studying", "getting ready", "planning")):
+        return False
+    return " for " not in lowered
+
+
+def _looks_like_company(value: str) -> bool:
+    lowered = _clean_capture(value).lower()
+    if not lowered:
+        return False
+    time_words = {"next", "tomorrow", "today", "month", "week", "summer", "winter"}
+    if time_words & set(lowered.split()):
+        return False
+    return not lowered.startswith(("a ", "an "))
+
+
 def _normalize_person_name(value: str) -> str:
     cleaned = _clean_capture(value)
     return cleaned[:1].upper() + cleaned[1:] if cleaned else cleaned
+
+
+def _normalize_relationship(value: str) -> str:
+    relation = _clean_capture(value).lower()
+    return "child" if relation == "kid" else relation
+
+
+def _pluralize_food(value: str) -> str:
+    cleaned = re.sub(r"^(?:severe|mild|bad)\s+", "", _clean_capture(value).lower())
+    if cleaned in {"peanut", "tree nut", "nut"}:
+        return f"{cleaned}s"
+    return cleaned
+
+
+def _sentence_fragment(value: str) -> str:
+    return _clean_capture(value)
 
 
 def _normalize_topic(value: str) -> str:

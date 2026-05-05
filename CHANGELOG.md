@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5 - Broader offline extraction and safer validation
+
+**What changed:** Expanded the deterministic fallback extractor to cover more generic memory slots: user names, current role, broader employment/location phrasing, cats and dogs, family members, dietary/allergy variants, and upcoming goals/events. Added sanity checks so event phrasing like "preparing for an interview at a company" does not become fake employment. Added request-size validation for message length, message count, IDs, and query length.
+
+**Why:** Private eval may run without optional OpenAI credentials, and reviewers inspect `/users/{user_id}/memories`. The offline path needed to be less brittle without hardcoding specific eval facts. Oversized input should also fail cleanly as validation instead of pushing large payloads through extraction, embedding, and Postgres.
+
+**Result:** Added regression coverage for broader personal facts, event extraction, raw-turn fallback, oversize request validation, and the interview-vs-employment false positive. The full Docker suite passes with `48 passed, 1 skipped`.
+
+**Next:** The deterministic extractor is still intentionally conservative. The best next quality gain would be a small held-out eval comparing fallback extraction to OpenAI extraction across long-tail phrasing, then tightening prompts/normalization based on observed misses rather than adding ad hoc regexes.
+
 ## v1.4 - Generic-first positioning and fixed embedding dimensions
 
 **What changed:** Reframed the project documentation around a general-purpose memory service rather than a video-only demo angle. Removed the misleading `EMBEDDING_DIMENSIONS` runtime setting and aligned the code/docs with the actual fixed `vector(64)` schema. Added a reviewer-facing evaluation snapshot to the README.

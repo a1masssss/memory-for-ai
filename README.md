@@ -59,6 +59,10 @@ Examples:
 - "walking Biscuit this morning" becomes `personal_context/pet = Dog named Biscuit`.
 - "I am vegetarian and allergic to shellfish" becomes separate dietary and allergy memories.
 - "i work at notion now, i'm based in berlin these days" is handled even with lowercase phrasing.
+- "I'm a PM at Notion, based out of Berlin" becomes separate employment, role, and location memories.
+- "My name is Alex", "I have a cat named Mochi", and "My son's name is Leo" become inspectable personal-context memories.
+- "I have a peanut allergy and don't eat meat" becomes allergy and dietary-preference memories.
+- "I'm preparing for a system design interview" is stored as an upcoming event/goal instead of only raw turn text.
 - "Actually I live in Munich now" is marked as a correction via attributes and supersedes the old location.
 - "I love TypeScript" -> "TypeScript generics are getting annoying" -> "TypeScript is fine for big projects" is stored as an opinion arc with stance and revision metadata instead of collapsing to one row.
 
@@ -132,8 +136,10 @@ The current test suite exercises both contract correctness and reviewer-facing m
 - tight-budget ranking where globally relevant memories must beat earlier sections
 - lightweight multi-hop recall such as `Biscuit -> Berlin`
 - hybrid lexical plus vector retrieval over both memories and turns
+- broader offline generic extraction for names, roles, family, pets, allergies, dietary constraints, and upcoming goals
+- oversized message and message-count validation returning 4xx rather than stressing ingestion
 
-The black-box recall fixture in `fixtures/recall_quality.json` currently requires at least `0.8` expected-term hit rate, and the full Docker test suite most recently passed with `25 passed, 1 skipped`.
+The black-box recall fixture in `fixtures/recall_quality.json` currently requires at least `0.8` expected-term hit rate, and the full Docker test suite most recently passed with `48 passed, 1 skipped`.
 
 ## Tradeoffs
 
@@ -148,6 +154,7 @@ The main tradeoff is extraction breadth. A rule-based extractor is predictable a
 - Missing API keys: the service uses deterministic fallback extraction.
 - OpenAI timeout or malformed model output: the service logs a warning and falls back to local extraction.
 - Slow or unavailable Postgres: startup fails health readiness, and requests fail rather than returning stale data.
+- Oversized turn payloads: Pydantic validation rejects excessive message count or message/query length with 4xx responses.
 - Oversized context budget: `max_tokens` is bounded by request validation.
 
 ## Running

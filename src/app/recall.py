@@ -22,6 +22,7 @@ SECTION_TITLES = {
     "character_continuity": "Continuity Anchors",
     "communication": "Communication Preferences",
     "opinions": "Known Opinions",
+    "project_goal": "Current Goals And Upcoming Events",
 }
 
 RECENT_CONTEXT_TITLE = "Relevant From Recent Conversations"
@@ -64,13 +65,17 @@ TYPE_BOOSTS = {
 }
 
 QUERY_ALIASES = {
+    ("personal_context", "name"): "name called identity who",
     ("personal_context", "current_location"): "location city live lives where moved based",
     ("personal_context", "employment"): "employment work works job company role joined",
+    ("personal_context", "current_role"): "role title position job work career",
     ("personal_context", "pet"): "pet dog cat animal name named",
     ("personal_context", "dietary_preference"): "diet food vegetarian vegan eats",
     ("personal_context", "allergy"): "allergy allergic avoid food constraint",
-    ("personal_context", "family"): "family child son daughter kid",
+    ("personal_context", "family"): "family child son daughter kid wife husband partner spouse",
     ("communication", "answer_style"): "communication answer style concise direct verbose",
+    ("project_goal", "upcoming_focus"): "preparing interview upcoming goal plan focus",
+    ("project_goal", "travel_plan"): "travel trip destination plan",
     ("creative_style", "visual_style"): "visual style aesthetic look generation video",
     ("camera_language", "camera_direction"): "camera composition framing shot angle video",
     ("motion_language", "motion_style"): "motion movement pacing speed video",
@@ -79,6 +84,15 @@ QUERY_ALIASES = {
 }
 
 QUERY_INTENT_RULES = (
+    {
+        "pattern": re.compile(
+            r"\b(name|called|call them|who is|identity)\b",
+            flags=re.IGNORECASE,
+        ),
+        "terms": ("name", "called", "identity"),
+        "keys": {("personal_context", "name")},
+        "categories": {"personal_context"},
+    },
     {
         "pattern": re.compile(
             r"\b(where|live|based|located|location|city|home base|call home|hometown)\b",
@@ -94,7 +108,10 @@ QUERY_INTENT_RULES = (
             flags=re.IGNORECASE,
         ),
         "terms": ("employment", "work", "job", "company", "role", "joined"),
-        "keys": {("personal_context", "employment")},
+        "keys": {
+            ("personal_context", "employment"),
+            ("personal_context", "current_role"),
+        },
         "categories": {"personal_context"},
     },
     {
@@ -188,6 +205,35 @@ QUERY_INTENT_RULES = (
         "terms": ("pet", "dog", "cat", "animal", "named"),
         "keys": {("personal_context", "pet")},
         "categories": {"personal_context"},
+    },
+    {
+        "pattern": re.compile(
+            r"\b(family|child|kid|son|daughter|wife|husband|partner|spouse)\b",
+            flags=re.IGNORECASE,
+        ),
+        "terms": ("family", "child", "son", "daughter", "partner", "spouse"),
+        "keys": {("personal_context", "family")},
+        "categories": {"personal_context"},
+    },
+    {
+        "pattern": re.compile(
+            r"\b(preparing|interview|presentation|exam|trip|travel|planning|upcoming|goal|focus)\b",
+            flags=re.IGNORECASE,
+        ),
+        "terms": (
+            "preparing",
+            "interview",
+            "trip",
+            "travel",
+            "upcoming",
+            "goal",
+            "focus",
+        ),
+        "keys": {
+            ("project_goal", "upcoming_focus"),
+            ("project_goal", "travel_plan"),
+        },
+        "categories": {"project_goal"},
     },
 )
 
@@ -608,6 +654,7 @@ def _section_order(grouped: dict[str, list[tuple[float, asyncpg.Record]]]) -> li
         "character_continuity",
         "communication",
         "opinions",
+        "project_goal",
         "generation_feedback",
     ]
     remaining = [category for category in grouped if category not in preferred]

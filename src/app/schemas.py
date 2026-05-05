@@ -6,6 +6,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+MAX_ID_LENGTH = 256
+MAX_MESSAGE_CONTENT_LENGTH = 20_000
+MAX_MESSAGES_PER_TURN = 50
+MAX_QUERY_LENGTH = 2_000
+
 MessageRole = Literal["user", "assistant", "tool"]
 MemoryType = Literal[
     "fact",
@@ -21,14 +26,14 @@ MemoryType = Literal[
 
 class Message(BaseModel):
     role: MessageRole
-    content: str = Field(min_length=1)
-    name: str | None = None
+    content: str = Field(min_length=1, max_length=MAX_MESSAGE_CONTENT_LENGTH)
+    name: str | None = Field(default=None, max_length=128)
 
 
 class TurnCreate(BaseModel):
-    session_id: str = Field(min_length=1)
-    user_id: str | None = None
-    messages: list[Message] = Field(min_length=1)
+    session_id: str = Field(min_length=1, max_length=MAX_ID_LENGTH)
+    user_id: str | None = Field(default=None, max_length=MAX_ID_LENGTH)
+    messages: list[Message] = Field(min_length=1, max_length=MAX_MESSAGES_PER_TURN)
     timestamp: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -38,9 +43,9 @@ class TurnCreated(BaseModel):
 
 
 class RecallRequest(BaseModel):
-    query: str
-    session_id: str = Field(min_length=1)
-    user_id: str | None = None
+    query: str = Field(max_length=MAX_QUERY_LENGTH)
+    session_id: str = Field(min_length=1, max_length=MAX_ID_LENGTH)
+    user_id: str | None = Field(default=None, max_length=MAX_ID_LENGTH)
     max_tokens: int = Field(default=1024, ge=1, le=8192)
 
 
@@ -56,9 +61,9 @@ class RecallResponse(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str
-    session_id: str | None = None
-    user_id: str | None = None
+    query: str = Field(max_length=MAX_QUERY_LENGTH)
+    session_id: str | None = Field(default=None, max_length=MAX_ID_LENGTH)
+    user_id: str | None = Field(default=None, max_length=MAX_ID_LENGTH)
     limit: int = Field(default=10, ge=1, le=50)
 
 
